@@ -1,10 +1,19 @@
 import { ADDONS, CATALOG_DATE, DEPT_EXTRA, PACKAGES, USAGE, type AddOn, type PackageDef, type PackageId, type ProductId } from './catalog';
 import { STATE_CODES } from './states';
+import { getStateRate, stateHardwareTax } from './tax';
 
 export type Billing = 'annual' | 'monthly';
 export type BuyerType = 'school' | 'club' | 'organization' | 'other';
+export type HardwareNeeds = {
+  cameras: number; mounts: number; sdCards: number; laptops: number;
+  tripods: number; cases: number; ipads: number; backup: number;
+};
+export const DEFAULT_HARDWARE_NEEDS: HardwareNeeds = {
+  cameras:1, mounts:1, sdCards:1, laptops:1, tripods:1, cases:0, ipads:0, backup:0,
+};
 export type QuoteAnswers = {
   buyerType: BuyerType;
+  hardwareNeeds?: HardwareNeeds;
   teams: number;
   camerasPerTeam: number;
   wantMount: boolean;
@@ -21,9 +30,6 @@ export type QuoteAnswers = {
   addonQuantities: Partial<Record<ProductId, number>>;
   shippingState: string;
   shippingZip: string;
-  combinedTaxRate: number | null;
-  taxVerified: boolean;
-  taxSource: string;
   freightTravel: number;
 };
 
@@ -32,8 +38,7 @@ export const DEFAULT_ANSWERS: QuoteAnswers = {
   wantMount:false, wantCase:false, priority:false, protection:false,
   trainingHours:0, storageGb:1000, deliveryGb:250, retentionMonths:12,
   departmentAdmin:false, acceptOverages:true, billing:'annual',
-  addonQuantities:{}, shippingState:'', shippingZip:'', combinedTaxRate:null,
-  taxVerified:false, taxSource:'', freightTravel:0,
+  addonQuantities:{}, shippingState:'', shippingZip:'', freightTravel:0,
 };
 
 export type Line = {
@@ -82,8 +87,13 @@ export function validateAnswers(a: QuoteAnswers): string[] {
   if(!Number.isFinite(a.storageGb)||a.storageGb<0||a.storageGb>100000)errors.push('Storage estimate is outside the supported range.');
   if(!Number.isFinite(a.deliveryGb)||a.deliveryGb<0||a.deliveryGb>100000)errors.push('Monthly delivery is outside the supported range.');
   if(![12,24,36].includes(a.retentionMonths))errors.push('Choose an available retention preference.');
-  if(a.combinedTaxRate!==null && (!Number.isFinite(a.combinedTaxRate)||a.combinedTaxRate<0||a.combinedTaxRate>20)) errors.push('Combined sales tax rate must be between 0% and 20%.');
   if(!Number.isFinite(a.freightTravel)||a.freightTravel<0||a.freightTravel>500000)errors.push('Additional freight/travel amount is invalid.');
+  if(a.hardwareNeeds){
+    for(const [name,value] of Object.entries(a.hardwareNeeds)) {
+      if(!Number.isInteger(value)||value<0||value>100)errors.push('Choose a valid number for '+name+'.');
+    }
+    if(a.hardwareNeeds.cameras<1)errors.push('Select at least one camera.');
+  }
   for(const p of ADDONS){const v=a.addonQuantities[p.id]??0;if(!Number.isInteger(v)||v<0||v>100)errors.push('Invalid quantity for '+p.name);}
   return errors;
 }
@@ -120,9 +130,21 @@ export function evaluatePackage(a:QuoteAnswers,p:PackageDef):QuoteEvaluation {
   lines.push(line(p.title+' annual subscription',activeLicenseCount,p.annualService,'annual','year'));
   if(extraTeams)lines.push(line('Additional named team annual subscription',extraTeams,DEPT_EXTRA.annual,'annual','year'));
 
-  const neededCameras=Math.max(0,(a.camerasPerTeam-p.camerasPerTeam)*teams);
-  const neededMounts=a.wantMount?Math.max(0,(1-p.mountPerTeam)*teams):0;
-  const neededCases=a.wantCase?Math.max(0,(1-p.casePerTeam)*teams):0;
+  // The complete kits include one sport mount and one recording card PER camera.
+  // Exact requested quantities take precedence over the legacy per-team questionnaire.
+  const includedCameras=dept ? 5+extraTeams : p.camerasPerTeam*teams;
+  const includedMounts=dept ? 5+extraTeams : p.mountPerTeam*teams;
+  const includedCards=includedCameras;
+  const includedLaptops=dept ? 5+extraTeams : teams;
+  const includedTripods=includedLaptops;
+  const includedCases=dept ? 0 : p.casePerTeam*teams;
+  const h=a.hardwareNeeds;
+  const wantedCameras=h ? h.cameras : a.camerasPerTeam*teams;
+  const wantedMounts=h ? h.mounts : a.wantMount ? wantedCameras : 0;
+  const wantedCases=h ? h.cases : a.wantCase ? teams : 0;
+  const neededCameras=Math.max(0,wantedCameras-includedCameras);
+  const neededMounts=Math.max(0,wantedMounts-includedMounts);
+  const neededCases=Math.max(0,wantedCases-includedCases);
   // The combined camera+mount bundle costs $1642 vs $1690 separately.
   const bundles=Math.min(neededCameras,neededMounts);
   const cams=neededCameras-bundles;
@@ -130,7 +152,17 @@ export function evaluatePackage(a:QuoteAnswers,p:PackageDef):QuoteEvaluation {
   if(bundles)lines.push(line('Required extra camera + mount bundles',bundles,1642,'hardware','once',true));
   if(cams)lines.push(line('Required extra cameras + cards',cams,1295,'hardware','once',true));
   if(mounts)lines.push(line('Required sport mounts',mounts,395,'hardware','once',true));
-  if(neededCases)lines.push(line('Required protective cases',neededCases,495,'hardware','once',true));
+  if(neededCases)lines.push(line('Required Pelican cases',neededCases,495,'hardware','once',true));
+  if(h){
+    const cards=Math.max(0,h.sdCards-includedCards-neededCameras); // Extra cameras include one card each.
+    const laptops=Math.max(0,h.laptops-includedLaptops);
+    const tripods=Math.max(0,h.tripods-includedTripods);
+    if(cards) lines.push(line('Additional microSD recording cards',cards,69,'hardware','once',true));
+    if(laptops)lines.push(line('Additional configured laptops',laptops,2995,'hardware','once',true));
+    if(tripods)lines.push(line('Additional tripods',tripods,99,'hardware','once',true));
+    if(h.ipads)lines.push(line('Configured refurbished iPads',h.ipads,549,'hardware','once',true));
+    if(h.backup)lines.push(line('6 TB backup drives',h.backup,299,'hardware','once',true));
+  }
 
   if(a.priority&&!p.priority)lines.push(line('Required priority support / year',teams,499,'annual','year'));
   if(a.protection&&!p.protection)lines.push(line('Required premium protection / year',teams,499,'annual','year'));
@@ -138,8 +170,12 @@ export function evaluatePackage(a:QuoteAnswers,p:PackageDef):QuoteEvaluation {
   const extraTraining=Math.max(0,a.trainingHours-includedTraining);
   if(extraTraining)lines.push(line('Additional requested training hours',extraTraining,149,'one_time_service','once'));
 
+  // Discount explicitly selected spare camera + mount pairs to the published $1,642 bundle.
+  const optionalBundles=Math.min(cleanQty(a.addonQuantities.camera||0),cleanQty(a.addonQuantities.mount||0));
+  if(optionalBundles)lines.push(line('Optional camera + mount bundle',optionalBundles,1642,'hardware','once',true));
   for(const addon of ADDONS){
-    const qty=cleanQty(a.addonQuantities[addon.id]);
+    const initialQty=cleanQty(a.addonQuantities[addon.id]);
+    const qty=(addon.id==='camera'||addon.id==='mount')?Math.max(0,initialQty-optionalBundles):initialQty;
     if(!qty)continue;
     if(addon.id==='support'&&(a.priority||p.priority)){
       notes.push('Duplicate premium support add-on was excluded; support is already included or required.');
@@ -160,27 +196,99 @@ export function evaluatePackage(a:QuoteAnswers,p:PackageDef):QuoteEvaluation {
   const annualExtras=moneyRound(annualService-baseAnnual);
   const monthlyBaseService=moneyRound(baseMonthly);
   const taxableBase=moneyRound(lines.filter(l=>l.taxable).reduce((s,l)=>s+l.amount,0));
-  const zipOkay=/^\d{5}$/.test(a.shippingZip.trim());
-  const stateOkay=STATE_CODES.includes(a.shippingState);
-  const hasTaxRate=a.combinedTaxRate!==null&&Number.isFinite(a.combinedTaxRate)&&a.combinedTaxRate>=0&&a.combinedTaxRate<=20;
-  const taxReady=Boolean(zipOkay&&stateOkay&&hasTaxRate&&a.taxVerified&&a.taxSource.trim().length>=5);
-  const taxAmount=taxReady?moneyRound(taxableBase*(Number(a.combinedTaxRate)/100)):null;
-  const taxReason=!stateOkay||!zipOkay?'Enter shipping state and 5-digit ZIP.':!hasTaxRate?'Enter a verified combined destination rate.':!a.taxVerified||a.taxSource.trim().length<5?'Sales representative must verify the combined state/local tax rate and source.':'Hardware-only sales tax estimate based on the approved verified rate.';
+  const taxRate=getStateRate(a.shippingState);
+  const taxReady=taxRate!==null;
+  const taxAmount=stateHardwareTax(taxableBase,a.shippingState);
+  const taxReason=taxReady
+    ? `Estimated state-level rate ${taxRate}% (local sales tax NOT included). Final tax varies by precise address and exemptions.`
+    : 'Choose a shipping state or enter a ZIP to estimate state-level hardware tax.';
   const dueBeforeTax=moneyRound(hardwareSubtotal+oneTimeServices+(a.billing==='annual'?annualService:baseMonthly+annualExtras)+a.freightTravel);
   const dueNow=taxAmount===null?null:moneyRound(dueBeforeTax+taxAmount);
   const firstYearBeforeTax=moneyRound(hardwareSubtotal+oneTimeServices+(a.billing==='annual'?annualService:12*baseMonthly+annualExtras)+estimatedUsageAnnual+a.freightTravel);
   const firstYearTotal=taxAmount===null?null:moneyRound(firstYearBeforeTax+taxAmount);
   if(dept)notes.push('Includes five full kits and named team licenses. Each added sixth through tenth team adds a full kit and license.');
   if(!dept&&teams>1)notes.push('Independent team subscriptions have separate cloud allowances; storage is not pooled between teams.');
-  notes.push('Bundled package equipment/setup is classified as hardware for this draft; confirm any separately stated setup allocation before issuing a tax invoice.');
-  notes.push('Tax applicability, shipping treatment, exemptions, and collection obligations are jurisdiction-specific; accounting review required.');
-  return {package:p,eligible:reasons.length===0,reasons,lines,hardwareSubtotal,oneTimeServices,annualService,monthlyBaseService,annualExtras,estimatedUsageAnnual,taxableBase,taxAmount,taxReady,taxReason,dueBeforeTax,dueNow,firstYearBeforeTax,firstYearTotal,includedStorageGb,includedDeliveryGb,includedCameras:p.camerasPerTeam,includedRetentionMonths:p.retentionMonths,notes};
+  notes.push('For this illustration, the one-time package equipment/setup charge is treated as tangible equipment; any separable labor must be reviewed before a final quote.');
+  notes.push('Tax shown is STATE-ONLY, based on July 2026 published rates, and excludes local taxes, exemptions, special jurisdictions, seller nexus and freight taxability. This is not a final tax quote.');
+  return {package:p,eligible:reasons.length===0,reasons,lines,hardwareSubtotal,oneTimeServices,annualService,monthlyBaseService,annualExtras,estimatedUsageAnnual,taxableBase,taxAmount,taxReady,taxReason,dueBeforeTax,dueNow,firstYearBeforeTax,firstYearTotal,includedStorageGb,includedDeliveryGb,includedCameras,includedRetentionMonths:p.retentionMonths,notes};
 }
 
+
+/** Reference-only comparison against individually listed items plus Basic subscriptions.
+ * NOT a separately approved bundle or standalone software-only product.  It does not
+ * promise equivalent retention, cloud allowance, or department administration.
+ */
+export type ComponentEstimate = {
+  lines:Line[]; hardware:number; oneTimeServices:number;
+  annualService:number; monthlyService:number; annualExtras:number;
+  annualUsageEstimate:number; firstYear:number; dueBeforeTax:number;
+  taxableBase:number; notes:string[];
+};
+export function estimateIndividualComponents(a:QuoteAnswers):ComponentEstimate {
+  const teams=Math.max(1,Math.floor(a.teams));
+  const h=a.hardwareNeeds || {
+    cameras:teams*a.camerasPerTeam, mounts:a.wantMount?teams*a.camerasPerTeam:0,
+    sdCards:teams*a.camerasPerTeam, laptops:teams, tripods:teams,
+    cases:a.wantCase?teams:0, ipads:0, backup:0,
+  };
+  const lines:Line[]=[];
+  const bundle=Math.min(h.cameras,h.mounts);
+  const eachCamera=h.cameras-bundle;
+  const extraMount=h.mounts-bundle;
+  if(bundle) lines.push(line('Camera + mount + recording card bundles',bundle,1642,'hardware','once',true));
+  if(eachCamera) lines.push(line('Camera + recording card',eachCamera,1295,'hardware','once',true));
+  if(extraMount) lines.push(line('Sport-specific mounts',extraMount,395,'hardware','once',true));
+  const needs:[number,string,number][]=[
+    [h.laptops,'Configured processing laptops',2995],
+    [Math.max(0,h.sdCards-h.cameras),'Extra microSD recording cards',69],
+    [h.tripods,'Tripods',99],[h.cases,'Pelican protective cases',495],
+    [h.ipads,'Configured refurbished iPads',549],[h.backup,'6 TB local backup drives',299],
+  ];
+  for(const [qty,name,unitPrice] of needs) if(qty)lines.push(line(name,qty,unitPrice,'hardware','once',true));
+  lines.push(line('Basic Team annual software service / license',teams,PACKAGES[0].annualService,'annual','year'));
+  if(a.priority) lines.push(line('Priority support per team',teams,499,'annual','year'));
+  if(a.protection) lines.push(line('Premium protection per team',teams,499,'annual','year'));
+  if(a.trainingHours)lines.push(line('Remote training hours',a.trainingHours,149,'one_time_service','once'));
+  const optionalBundles=Math.min(cleanQty(a.addonQuantities.camera||0),cleanQty(a.addonQuantities.mount||0));
+  if(optionalBundles)lines.push(line('Optional extra camera + mount bundles',optionalBundles,1642,'hardware','once',true));
+  for(const addon of ADDONS){
+    const initialQty=cleanQty(a.addonQuantities[addon.id]);
+    const qty=(addon.id==='camera'||addon.id==='mount')?Math.max(0,initialQty-optionalBundles):initialQty;
+    if(!qty || (addon.id==='support' && a.priority) || (addon.id==='protection' && a.protection))continue;
+    const category=addon.category==='hardware'?'hardware':addon.category==='annual'?'annual':'one_time_service';
+    lines.push(line(addon.name,qty,addon.price,category,category==='annual'?'year':'once',category==='hardware'));
+  }
+  const sum=(cat:Line['category'])=>moneyRound(lines.filter(x=>x.category===cat).reduce((v,x)=>v+x.amount,0));
+  const hardware=sum('hardware'),oneTimeServices=sum('one_time_service'),annualService=sum('annual');
+  const annualExtras=moneyRound(annualService-PACKAGES[0].annualService*teams);
+  const monthlyService=moneyRound(PACKAGES[0].monthlyService*teams);
+  const overStorage=Math.max(0,a.storageGb-teams*PACKAGES[0].storageGb);
+  const overDelivery=Math.max(0,a.deliveryGb-teams*PACKAGES[0].deliveryGb);
+  const annualUsageEstimate=moneyRound(12*(overStorage*USAGE.storageGbMonth+overDelivery*USAGE.deliveredGb));
+  const billedService=a.billing==='annual'?annualService:12*monthlyService+annualExtras;
+  const dueService=a.billing==='annual'?annualService:monthlyService+annualExtras;
+  const notes=['Reference pricing only: components are not an approved independent system offering. Basic software service is used solely for a like-for-like pricing benchmark.'];
+  if(a.retentionMonths>12)notes.push('The Basic reference subscription does not include requested 24-month video retention.');
+  if(a.departmentAdmin)notes.push('The Basic reference subscription does not include central department administration.');
+  if(annualUsageEstimate)notes.push('Expected storage or delivery overages are illustrative and not billed until actually measured.');
+  return {lines,hardware,oneTimeServices,annualService,monthlyService,annualExtras,annualUsageEstimate,
+    taxableBase:hardware,firstYear:moneyRound(hardware+oneTimeServices+billedService+annualUsageEstimate+a.freightTravel),
+    dueBeforeTax:moneyRound(hardware+oneTimeServices+dueService+a.freightTravel),notes};
+}
 export function getRecommendations(a:QuoteAnswers){
   const comparisons=PACKAGES.map(p=>evaluatePackage(a,p));
   const eligible=comparisons.filter(x=>x.eligible);
-  const recommended=eligible.slice().sort((x,y)=>(x.firstYearTotal??x.firstYearBeforeTax)-(y.firstYearTotal??y.firstYearBeforeTax))[0]||null;
+  const sorted=eligible.slice().sort((x,y)=>x.firstYearBeforeTax-y.firstYearBeforeTax);
+  let recommended=sorted[0]||null;
+  // Team Plus includes a Pelican case and the second complete camera/mount system.
+  // For two-camera-per-team requirements, recommend the complete Plus kit when
+  // its premium is no more than $200 per team over a lower-priced add-on build.
+  const neededCameras=a.hardwareNeeds?.cameras??a.camerasPerTeam*a.teams;
+  const plus=eligible.find(x=>x.package.id==='plus');
+  if(plus && recommended?.package.id==='basic' && neededCameras>=a.teams*2 &&
+     neededCameras<=a.teams*2 && plus.firstYearBeforeTax-recommended.firstYearBeforeTax <=200*a.teams){
+    recommended=plus;
+  }
   return {comparisons,recommended,customNeeded:!recommended,pricingDate:CATALOG_DATE};
 }
 

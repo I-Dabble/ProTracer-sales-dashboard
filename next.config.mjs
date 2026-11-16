@@ -1,6 +1,11 @@
 /** @type {import('next').NextConfig} */
+const basePath=process.env.NEXT_PUBLIC_BASE_PATH||'';
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  output: 'export',
+  images: { unoptimized: true },
+  basePath,
+  assetPrefix: basePath || undefined,
 };
 export default nextConfig;

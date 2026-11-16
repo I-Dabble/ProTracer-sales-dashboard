@@ -1,222 +1,284 @@
 'use client';
-import { useMemo, useState } from 'react';
-import {
-  ArrowRight, ArrowLeft, BadgeCheck, Building2, Camera, Check, CheckCircle2,
-  ChevronDown, ChevronRight, CircleHelp, Clock3, FileDown, FileText, HardDrive,
-  Headphones, Info, Laptop, Layers3, LockKeyhole, MapPin, Minus, Plus, Printer,
-  RotateCcw, ShieldCheck, SlidersHorizontal, Sparkles, Target, Trophy, X
-} from 'lucide-react';
-import { ADDONS, CATALOG_DATE, type PackageId, type ProductId } from '@/lib/catalog';
-import { DEFAULT_ANSWERS, getRecommendations, price, type QuoteAnswers, type QuoteEvaluation } from '@/lib/quote';
-import { STATES } from '@/lib/states';
 
-type Mode='customer'|'staff';
-type Contact={billingName:string;organization:string;teamNames:string;email:string;representative:string;existingCustomerNumber:string};
-type Saved={id:string;invoiceNumber:string;customerNumber:string;dueNow:number};
-const EMPTY_CONTACT:Contact={billingName:'',organization:'',teamNames:'',email:'',representative:'',existingCustomerNumber:''};
-const STEPS=[{eyebrow:'01 / YOUR PROGRAM',title:'Tell us about your team',short:'Your program'},
-  {eyebrow:'02 / YOUR NEEDS',title:'What does great coverage look like?',short:'Your needs'},
-  {eyebrow:'03 / YOUR SETUP',title:'Make the setup yours',short:'Your setup'},
-  {eyebrow:'04 / YOUR MATCH',title:'Your best-fit ProTracer setup',short:'Your match'}] as const;
-function RadioSet<T extends string|number>({name,items,value,onChange,columns=3}: {name:string;items:{value:T;label:string;detail?:string}[];value:T;onChange:(value:T)=>void;columns?:number}){
-  return <div className={'radio-grid cols-'+columns} role="radiogroup" aria-label={name}>{items.map(item=><label key={String(item.value)} className={'radio-tile '+(value===item.value?'is-selected':'')}>
-    <input type="radio" name={name} value={String(item.value)} checked={value===item.value} onChange={()=>onChange(item.value)}/>
-    <span className="radio-symbol"><Check size={13}/></span><span><strong>{item.label}</strong>{item.detail&&<small>{item.detail}</small>}</span>
+import { useEffect, useMemo, useState } from 'react';
+import {
+  ArrowRight, BadgeCheck, Camera, Check, CheckCircle2, ChevronDown, ClipboardCopy,
+  Cloud, CreditCard, HardDrive, Info, Laptop, Layers, MapPin, MemoryStick,
+  Minus, Monitor, Package, Plus, Printer, RotateCcw, ShieldCheck, Sparkles,
+  Target, Truck, X, Zap, type LucideIcon,
+} from 'lucide-react';
+import { ADDONS, CATALOG_DATE, DEPT_EXTRA, PACKAGES, type PackageId, type ProductId } from '@/lib/catalog';
+import {
+  DEFAULT_ANSWERS, DEFAULT_HARDWARE_NEEDS, estimateIndividualComponents,
+  getRecommendations, price, type HardwareNeeds, type QuoteAnswers,
+  type QuoteEvaluation,
+} from '@/lib/quote';
+import { STATES } from '@/lib/states';
+import { getStateRate, stateHardwareTax, STATE_RATE_SOURCE, STATE_RATE_SOURCE_URL } from '@/lib/tax';
+
+const INITIAL:QuoteAnswers={...DEFAULT_ANSWERS,hardwareNeeds:{...DEFAULT_HARDWARE_NEEDS}};
+const EQUIPMENT: Array<{key:keyof HardwareNeeds;title:string;hint:string;icon:LucideIcon}>=[
+  {key:'cameras',title:'360° cameras',hint:'Capture your action from every angle',icon:Camera},
+  {key:'mounts',title:'Camera mounts',hint:'One comes with each package camera',icon:Target},
+  {key:'sdCards',title:'Recording cards',hint:'One microSD comes with each camera',icon:MemoryStick},
+  {key:'laptops',title:'Processing laptops',hint:'Configured and ready for capture',icon:Laptop},
+  {key:'tripods',title:'Camera tripods',hint:'Portable setup at your venue',icon:Layers},
+  {key:'cases',title:'Pelican cases',hint:'Protective equipment transport',icon:Package},
+  {key:'ipads',title:'Refurbished iPads',hint:'Additional configured mobile access',icon:Monitor},
+  {key:'backup',title:'6 TB backup drives',hint:'Optional local video backup',icon:HardDrive},
+];
+const count=(v:number,min=0,max=100)=>Number.isFinite(v)?Math.min(max,Math.max(min,Math.floor(v))):min;
+const fmt=(v:number)=>new Intl.NumberFormat('en-US').format(v);
+const stateLabel=(s:string)=>STATES.find(x=>x[0]===s)?.[1]??s;
+function Quantity({label,value,onChange,min=0,max=100}:{label:string;value:number;onChange:(n:number)=>void;min?:number;max?:number}){
+  return <div className="qty" role="group" aria-label={label}>
+    <button type="button" aria-label={`Remove one ${label}`} onClick={()=>onChange(count(value-1,min,max))} disabled={value<=min}><Minus size={16}/></button>
+    <input aria-label={`${label} quantity`} type="number" inputMode="numeric" min={min} max={max} value={value} onChange={e=>onChange(count(Number(e.target.value),min,max))}/>
+    <button type="button" aria-label={`Add one ${label}`} onClick={()=>onChange(count(value+1,min,max))} disabled={value>=max}><Plus size={16}/></button>
+  </div>;
+}
+function Radio<T extends string>({label,items,value,onChange}:{label:string;items:{value:T;name:string;hint?:string}[];value:T;onChange:(v:T)=>void}){
+  return <div className="radio-options" role="radiogroup" aria-label={label}>{items.map(i=><label key={i.value} className={`radio-pill ${value===i.value?'active':''}`}>
+    <input type="radio" name={label} checked={value===i.value} onChange={()=>onChange(i.value)}/>
+    <span className="radio-check">{value===i.value&&<Check size={13}/>}</span>
+    <span><strong>{i.name}</strong>{i.hint&&<small>{i.hint}</small>}</span>
   </label>)}</div>;
 }
-function Field({label,children,hint,required=false}:{label:string;children:React.ReactNode;hint?:string;required?:boolean}){
-  return <div className="field"><label className="field-label">{label}{required&&<span className="required"> *</span>}</label>{children}{hint&&<span className="field-hint">{hint}</span>}</div>;
+function PriceRow({label,value,soft=false}:{label:string;value:string;soft?:boolean}){return <div className={`price-row ${soft?'subtle':''}`}><span>{label}</span><strong>{value}</strong></div>;}
+function valueBonuses(q:QuoteEvaluation,a:QuoteAnswers){
+  const p=q.package;const h=a.hardwareNeeds??DEFAULT_HARDWARE_NEEDS;
+  const kitCount=p.id==='department'?Math.max(5,a.teams):a.teams;
+  const includedCameras=p.camerasPerTeam*kitCount;
+  const includedCases=p.casePerTeam*kitCount;
+  const list:string[]=[];
+  if(includedCameras>h.cameras)list.push(`${includedCameras-h.cameras} additional 360° camera${includedCameras-h.cameras===1?'':'s'} with mounts and cards`);
+  if(includedCases>h.cases)list.push(`${includedCases-h.cases} Pelican protective case${includedCases-h.cases===1?'':'s'}`);
+  if(q.includedStorageGb>a.storageGb)list.push(`${fmt(q.includedStorageGb-a.storageGb)} GB more cloud storage than requested`);
+  if(q.includedDeliveryGb>a.deliveryGb)list.push(`${fmt(q.includedDeliveryGb-a.deliveryGb)} GB/month extra video delivery capacity`);
+  if(p.priority&&!a.priority)list.push('Priority technical support');
+  if(p.protection&&!a.protection)list.push('Premium equipment protection');
+  const includedTraining=p.trainingHoursPerTeam*kitCount;
+  if(includedTraining>a.trainingHours)list.push(`${includedTraining-a.trainingHours} annual remote-training hour${includedTraining-a.trainingHours===1?'':'s'}`);
+  if(p.retentionMonths>a.retentionMonths)list.push(`${p.retentionMonths}-month video retention`);
+  if(p.departmentAdmin&&!a.departmentAdmin)list.push('Centralized department administration');
+  if(!list.length)list.push('One mount and recording card per included camera','ProTracer software and standard technical support');
+  return list.slice(0,5);
 }
-function CaptionIcon({type}:{type:'camera'|'storage'|'support'|'retention'}){
-  return type==='camera'?<Camera size={16}/>:type==='storage'?<HardDrive size={16}/>:type==='support'?<Headphones size={16}/>:<Clock3 size={16}/>;
+function pitch(q:QuoteEvaluation,a:QuoteAnswers){
+  const name=q.package.id;
+  if(name==='basic')return 'All the essentials for a strong start: a complete camera, mount, recording card and processing setup with ProTracer software, video storage and standard support.';
+  if(name==='plus')return 'Cover more of the action: Team Plus includes two complete camera-and-mount setups and a Pelican case, while keeping the same recurring service price as Basic.';
+  if(name==='premium')return 'Step up to larger cloud capacity, extended retention, priority service, premium protection and annual training—alongside your two complete camera systems.';
+  return `Equip ${Math.max(5,a.teams)} named teams under one department account with individual camera kits, pooled video storage and centralized oversight.`;
 }
-function QtyControl({value,onChange}:{value:number;onChange:(x:number)=>void}){
-  return <div className="qty-control"><button aria-label="Remove one" type="button" disabled={value<=0} onClick={()=>onChange(Math.max(0,value-1))}><Minus size={15}/></button><span aria-live="polite">{value}</span><button aria-label="Add one" type="button" disabled={value>=100} onClick={()=>onChange(Math.min(100,value+1))}><Plus size={15}/></button></div>;
-}
-function TotalTag({amount,muted=false}:{amount:number|null;muted?:boolean}){
-  return <span className={muted?'muted':''}>{amount===null?'Tax pending':price(amount)}</span>;
-}
-function PackageCard({item,recommended,selected,onSelect}:{item:QuoteEvaluation;recommended:boolean;selected:boolean;onSelect:(x:PackageId)=>void}){
-  const p=item.package;
-  return <article className={'package-card '+(selected?'chosen ':'')+(recommended?'best':'')}>
-    <div className="package-top"><span className="package-badge">{recommended?<><Sparkles size={12}/> Recommended</>:p.badge}</span>{!item.eligible&&<span className="tiny-warning">Custom review</span>}</div>
-    <h3>{p.title}</h3><p className="package-subtitle">{p.subtitle}</p>
-    <div className="package-price"><strong>{price(item.firstYearBeforeTax)}</strong><span>estimated year one, before tax</span></div>
-    <div className="package-meta"><span><strong>{price(item.hardwareSubtotal)}</strong> one-time hardware</span><span><strong>{price(item.annualService)}</strong> / yr service</span></div>
-    <div className="package-divider"/>
-    <ul className="feature-list">
-      <li><Check size={15}/>{p.camerasPerTeam} included camera{p.camerasPerTeam>1?'s':''} per active team</li>
-      <li><Check size={15}/>{item.includedStorageGb.toLocaleString()} GB retained cloud</li>
-      <li><Check size={15}/>{item.includedDeliveryGb.toLocaleString()} GB monthly delivery</li>
-      <li><Check size={15}/>{p.retentionMonths} months retention</li>
-      <li><Check size={15}/>{p.priority?'Priority':'Standard'} support</li>
-    </ul>
-    {item.reasons.length>0&&<div className="package-reason"><Info size={15}/><span>{item.reasons[0]}</span></div>}
-    <button type="button" className={'select-package '+(selected?'active':'')} onClick={()=>onSelect(p.id)} disabled={!item.eligible}>
-      {selected?'Selected package':item.eligible?'Compare this package':'Requires custom quote'}{selected?<CheckCircle2 size={17}/>:<ArrowRight size={16}/>}
-    </button>
-  </article>;
+function baseYear(q:QuoteEvaluation,a:QuoteAnswers){
+  const p=q.package;const extra=p.id==='department'?Math.max(0,a.teams-5):0;
+  const multiplier=p.id==='department'?1:a.teams;
+  return p.hardware*multiplier+extra*DEPT_EXTRA.hardware+
+    (a.billing==='annual'?(p.annualService*multiplier+extra*DEPT_EXTRA.annual):(p.monthlyService*multiplier+extra*DEPT_EXTRA.monthly)*12);
 }
 
 export default function SalesApp(){
-  const [step,setStep]=useState(0);
-  const [mode,setMode]=useState<Mode>('customer');
-  const [answers,setAnswers]=useState<QuoteAnswers>(DEFAULT_ANSWERS);
-  const [contact,setContact]=useState<Contact>(EMPTY_CONTACT);
-  const [selection,setSelection]=useState<PackageId|null>(null);
-  const [detailsOpen,setDetailsOpen]=useState(true);
-  const [showAllExtras,setShowAllExtras]=useState(false);
-  const [saveOpen,setSaveOpen]=useState(false);
-  const [repKey,setRepKey]=useState('');
-  const [saving,setSaving]=useState(false);
-  const [saveError,setSaveError]=useState('');
-  const [saved,setSaved]=useState<Saved|null>(null);
-  const recommendations=useMemo(()=>getRecommendations(answers),[answers]);
-  const explicitChoice=recommendations.comparisons.find(q=>q.package.id===selection);
-  const chosen=(explicitChoice?.eligible?explicitChoice:null)||recommendations.recommended;
-  const recommended=recommendations.recommended;
-  const canSave=mode==='staff'&&Boolean(chosen?.eligible&&chosen?.taxReady);
-  function update<K extends keyof QuoteAnswers>(name:K,value:QuoteAnswers[K]){setAnswers(p=>({...p,[name]:value}));setSaved(null);}
-  function changeContact<K extends keyof Contact>(name:K,value:Contact[K]){setContact(p=>({...p,[name]:value}));}
-  function setAddon(id:ProductId,count:number){setAnswers(p=>({...p,addonQuantities:{...p.addonQuantities,[id]:count}}));setSaved(null);}
-  const extraCount=Object.values(answers.addonQuantities).reduce((s,n)=>s+(n||0),0);
-  const readyForSaving=Boolean(canSave&&contact.billingName.trim()&&contact.organization.trim()&&contact.teamNames.trim()&&contact.email.includes('@')&&contact.representative.trim());
-  async function saveDraft(){
-    if(!chosen){setSaveError('Select an eligible package.');return;}
-    setSaveError('');setSaving(true);
-    try{
-      const response=await fetch('/api/drafts',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+repKey},body:JSON.stringify({answers,packageId:chosen.package.id,contact})});
-      const result=await response.json();
-      if(!response.ok)throw new Error(result.error||'Could not save the invoice draft.');
-      setSaved(result as Saved);setSaveOpen(false);setRepKey('');
-    }catch(error){setSaveError(error instanceof Error?error.message:'Unexpected error saving draft.');}
-    finally{setSaving(false);}
+  const [answers,setAnswers]=useState<QuoteAnswers>(INITIAL);
+  const [selected,setSelected]=useState<PackageId|null>(null);
+  const [extrasOpen,setExtrasOpen]=useState(false);
+  const [compareOpen,setCompareOpen]=useState(false);
+  const [breakdownOpen,setBreakdownOpen]=useState(false);
+  const [copied,setCopied]=useState(false);
+  const [zipStatus,setZipStatus]=useState<'empty'|'checking'|'found'|'not-found'|'error'>('empty');
+  const [zipCity,setZipCity]=useState('');
+  const h=answers.hardwareNeeds??DEFAULT_HARDWARE_NEEDS;
+  const recom=useMemo(()=>getRecommendations(answers),[answers]);
+  const independent=useMemo(()=>estimateIndividualComponents(answers),[answers]);
+  const preferred=recom.recommended;
+  const manuallySelected=recom.comparisons.find(p=>p.package.id===selected&&p.eligible);
+  const configured=manuallySelected??preferred;
+  const stateRate=getStateRate(answers.shippingState);
+  const independentStateTax=stateHardwareTax(independent.taxableBase,answers.shippingState);
+  const pickedExtras=ADDONS.filter(x=>(answers.addonQuantities[x.id]??0)>0);
+  const extraCount=pickedExtras.reduce((n,x)=>n+(answers.addonQuantities[x.id]??0),0);
+  const extraEstimate=pickedExtras.reduce((n,x)=>n+x.price*(answers.addonQuantities[x.id]??0),0);
+  const firstYear=configured?(configured.firstYearTotal??configured.firstYearBeforeTax):null;
+  const selectionDiffers=preferred&&configured&&preferred.package.id!==configured.package.id;
+
+  function update<K extends keyof QuoteAnswers>(field:K,value:QuoteAnswers[K],clearSelection=true){
+    setAnswers(prev=>({...prev,[field]:value}));if(clearSelection)setSelected(null);
   }
-  const yearEstimate=chosen?chosen.firstYearTotal:null;
-  const activePackageName=chosen?.package.title||'Custom quote';
-  return <main className="app-root">
-    <div className="topbar"><div className="layout topbar-inner"><a className="brand" href="#top" aria-label="ProTracer Sales home"><span className="brand-symbol"><Target size={25} strokeWidth={2.8}/></span><span className="brand-text">PRO<span>TRACER</span><small>SALES STUDIO</small></span></a>
-      <nav aria-label="Navigation" className="top-nav"><a href="#how-it-works">How it works</a><a href="#packages" onClick={()=>setStep(3)}>Packages</a></nav>
-      <div className="mode-switch" aria-label="Experience mode"><button type="button" className={mode==='customer'?'current':''} onClick={()=>setMode('customer')}>For customers</button><button type="button" className={mode==='staff'?'current':''} onClick={()=>setMode('staff')}><LockKeyhole size={14}/>Sales team</button></div>
-    </div></div>
+  function reset(){setAnswers({...INITIAL,hardwareNeeds:{...DEFAULT_HARDWARE_NEEDS},addonQuantities:{}});setSelected(null);setZipStatus('empty');setZipCity('');setCopied(false);}
+  function changeTeamCount(n:number){
+    setAnswers(a=>{
+      const prev=a.hardwareNeeds??DEFAULT_HARDWARE_NEEDS;
+      const updated={...prev};
+      for(const key of ['cameras','mounts','sdCards','laptops','tripods'] as const){
+        const prior=prev[key];
+        updated[key]=count(prior===a.teams*2?n*2:prior===a.teams?n:prior+(n-a.teams));
+      }
+      return {...a,teams:n,hardwareNeeds:updated};
+    });setSelected(null);
+  }
+  function changeHardware(key:keyof HardwareNeeds,n:number){
+    setAnswers(a=>{
+      const prev=a.hardwareNeeds??DEFAULT_HARDWARE_NEEDS;
+      const updated={...prev,[key]:n};
+      if(key==='cameras'){
+        const delta=n-prev.cameras;
+        updated.mounts=count(prev.mounts+delta);
+        updated.sdCards=count(prev.sdCards+delta);
+      }
+      return {...a,hardwareNeeds:updated};
+    });setSelected(null);
+  }
+  function changeAddon(id:ProductId,value:number){
+    setAnswers(a=>({...a,addonQuantities:{...a.addonQuantities,[id]:value}}));setSelected(null);
+  }
+  function setState(state:string){
+    setAnswers(a=>({...a,shippingState:state,shippingZip:''}));
+    setZipStatus('empty');setZipCity('');
+  }
+  // ZIP autocomplete identifies the STATE, not an exact local sales tax district.
+  useEffect(()=>{
+    const zip=answers.shippingZip;
+    if(!/^\d{5}$/.test(zip)){setZipStatus('empty');setZipCity('');return;}
+    const controller=new AbortController();
+    setZipStatus('checking');
+    const timer=setTimeout(async()=>{
+      try{
+        const response=await fetch(`https://api.zippopotam.us/us/${zip}`,{signal:controller.signal});
+        if(!response.ok){setZipStatus('not-found');return;}
+        const data=await response.json() as {'places'?:Array<{'state abbreviation'?:string,'place name'?:string}>};
+        const place=data.places?.[0];
+        const state=place?.['state abbreviation']??'';
+        if(getStateRate(state)===null){setZipStatus('not-found');return;}
+        setAnswers(a=>a.shippingZip===zip?{...a,shippingState:state}:a);
+        setZipCity(place?.['place name']??'');setZipStatus('found');
+      }catch(e){if(!controller.signal.aborted)setZipStatus('error');}
+    },320);
+    return ()=>{clearTimeout(timer);controller.abort();};
+  },[answers.shippingZip]);
 
-    <section className="hero" id="top"><div className="layout hero-inner"><div className="hero-left"><div className="hero-eyebrow"><span className="dot"/> SMARTER SPORTS VIDEO. SIMPLER CHOICES.</div><h1>Build your ideal<br/><em>view of the game.</em></h1><p>Answer a few quick questions. We&apos;ll match your teams with the right 360-degree capture package and show exactly what&apos;s included.</p>
-      <div className="hero-chips"><span><CheckCircle2 size={15}/> Transparent pricing</span><span><CheckCircle2 size={15}/> No-pressure recommendations</span><span><CheckCircle2 size={15}/> Built around your program</span></div></div>
-      <div className="hero-visual" aria-hidden="true"><div className="orb orb-a"/><div className="orb orb-b"/><div className="hero-target"><span className="target-ring ring1"/><span className="target-ring ring2"/><span className="target-ring ring3"/><span className="target-center"><Camera size={30}/></span></div><div className="floating-note note-a"><Camera size={18}/><span><b>360 degree</b><small>Full-field vision</small></span></div><div className="floating-note note-b"><Sparkles size={19}/><span><b>Your best fit</b><small>Calculated in real time</small></span></div></div></div></section>
+  function summary(){
+    const quote=configured;
+    const headline=quote?.package.title??'Custom package – consultation required';
+    const destination=answers.shippingState?`${stateLabel(answers.shippingState)} (${answers.shippingState})`:'Not entered';
+    const lines=[
+      'PROTRACER | PERSONALIZED PACKAGE ESTIMATE',
+      `Program: ${answers.teams} named team(s)`,
+      `Requested: ${h.cameras} cameras, ${h.mounts} mounts, ${h.sdCards} microSD cards, ${h.laptops} laptops, ${h.tripods} tripods, ${h.cases} Pelican cases`,
+      `Recommended: ${preferred?.package.title??'Custom review required'}`,
+      `Configured selection: ${headline}`,
+      `Individually priced catalog reference (first year): ${price(independent.firstYear)} before tax; not an independent product offering`,
+      `Recommended base package: ${preferred?price(baseYear(preferred,answers)):'Contact ProTracer'}`,
+      `Configured first-year price before tax: ${quote?price(quote.firstYearBeforeTax):'Custom quote needed'}`,
+      `Hardware tax estimate: ${quote&&quote.taxAmount!==null?price(quote.taxAmount):'Not calculated (select state)'}`,
+      `State-level rate: ${stateRate===null?'Not selected':stateRate+'%'}`,
+      `Estimated first year including state-level tax: ${firstYear===null?'Custom quote needed':price(firstYear)}`,
+      `Shipping location: ${destination}${answers.shippingZip?' '+answers.shippingZip:''}`,
+      `Billing: ${answers.billing==='annual'?'Annual service prepaid':'Monthly service payments; hardware upfront'}`,
+      '',
+      'Included highlights:',...(quote?valueBonuses(quote,answers).map(v=>'• '+v):[]),
+      '',
+      'Estimate only. Local/district taxes, freight, exemptions and site-specific charges not included. One-time equipment/setup is treated as tangible hardware for this estimate; actual tax treatment must be confirmed. Prices subject to written quote. https://www.protracerofficial.com',
+    ];
+    return lines.join('\n');
+  }
+  async function copySummary(){
+    try{await navigator.clipboard.writeText(summary());setCopied(true);setTimeout(()=>setCopied(false),2800);}catch{setCopied(false);}
+  }
 
-    <div className="layout app-layout" id="how-it-works"><div className="main-column">
-      <div className="stepper" aria-label="Quote steps">{STEPS.map((s,i)=><button key={i} type="button" onClick={()=>setStep(i)} className={'stepper-item '+(step===i?'active ':'')+(step>i?'complete':'')} aria-current={step===i?'step':undefined}><span className="step-dot">{step>i?<Check size={16}/>:String(i+1).padStart(2,'0')}</span><span>{s.short}</span></button>)}</div>
-      <section className="wizard-panel">
-        <div className="section-intro"><div className="eyebrow">{STEPS[step].eyebrow}</div><h2>{STEPS[step].title}</h2><p>{step===0?'We will tailor the recommendation to your program size. Every named sport or team gets its own capture kit.':step===1?'A few details help us avoid paying for features you do not need and flag anything that requires a custom scope.':step===2?'Include optional equipment, choose how you want to pay, and enter the destination for the tax estimate.':'Compare the best match against every available package. You stay in control of the final selection.'}</p></div>
+  return <main id="top" className="site">
+    <header className="topbar"><div className="container topbar-content">
+      <a href="#top" className="wordmark" aria-label="ProTracer package builder home"><img src={`${process.env.NEXT_PUBLIC_BASE_PATH||''}/protracer-logo.png`} alt="ProTracer"/><span>PACKAGE BUILDER</span></a>
+      <nav aria-label="Site navigation"><a href="#build">Build your kit</a><a href="#packages">Compare packages</a><a href="https://www.protracerofficial.com/" target="_blank" rel="noopener noreferrer">ProTracer website <ArrowRight size={14}/></a></nav>
+    </div></header>
 
-        {step===0&&<div className="step-content">
-          <div className="question-block"><div className="question-label"><span className="question-number">01</span><div><h3>What kind of program is this?</h3><p>We support individual teams and entire athletic departments.</p></div></div>
-            <RadioSet<QuoteAnswers['buyerType']> name="program-type" columns={2} items={[{value:'school',label:'School / college',detail:'Varsity, JV, collegiate'},{value:'club',label:'Club / academy',detail:'Competitive and training programs'},{value:'organization',label:'Athletic department',detail:'Multiple sports and team administrators'},{value:'other',label:'Another program',detail:'Community and private organizations'}]} value={answers.buyerType} onChange={v=>{update('buyerType',v);if(v==='organization')update('departmentAdmin',true);}}/>
-          </div>
-          <div className="question-block"><div className="question-label"><span className="question-number">02</span><div><h3>How many named teams need coverage?</h3><p>Men&apos;s and women&apos;s teams, varsity and JV count separately.</p></div></div>
-            <RadioSet<number> name="team-count" columns={5} items={[1,2,3,4,5].map(n=>({value:n,label:String(n)}))} value={answers.teams<=5?answers.teams:0} onChange={v=>update('teams',v)}/>
-            <div className="inline-numeric"><span>More than five?</span><label><span className="sr-only">Number of teams</span><input type="number" inputMode="numeric" min="6" max="50" value={answers.teams>5?answers.teams:''} placeholder="6-50" onChange={e=>update('teams',Math.max(6,Math.min(50,Number(e.target.value)||6)))}/></label><span className="helper-text">Additional department teams 6-10 may be added; 11+ need custom review.</span></div>
-          </div>
-          <div className="question-block"><div className="question-label"><span className="question-number">03</span><div><h3>Do you need one shared athletic department dashboard?</h3><p>Central administration, pooled usage and coordinated support.</p></div></div>
-            <RadioSet<'yes'|'no'> name="department-admin" columns={2} value={answers.departmentAdmin?'yes':'no'} onChange={v=>update('departmentAdmin',v==='yes')} items={[{value:'no',label:'No, separate teams are fine'},{value:'yes',label:'Yes, one department view'}]}/>
-          </div>
-          <div className="mini-form"><div className="mini-form-heading"><Building2 size={18}/><span>{mode==='staff'?'Customer details (needed for invoice saving)':'Your details (optional while exploring)'}</span></div>
-            <div className="form-grid">
-              <Field label="School or organization"><input value={contact.organization} onChange={e=>changeContact('organization',e.target.value)} placeholder="e.g., Northview Athletics" maxLength={150}/></Field>
-              <Field label="Team / sport(s)" hint={answers.teams>1?'Separate the named teams with semicolons.':''}><input value={contact.teamNames} onChange={e=>changeContact('teamNames',e.target.value)} placeholder={answers.teams>1?"Men's soccer; Women's soccer; ...":'e.g., Varsity soccer'} maxLength={500}/></Field>
-              <Field label="Contact / billing name"><input value={contact.billingName} onChange={e=>changeContact('billingName',e.target.value)} placeholder="e.g., Athletics Director" maxLength={150}/></Field>
-              <Field label="Email address"><input type="email" value={contact.email} onChange={e=>changeContact('email',e.target.value)} placeholder="name@example.com" maxLength={250}/></Field>
-              {mode==='staff'&&<><Field label="Sales representative"><input value={contact.representative} onChange={e=>changeContact('representative',e.target.value)} placeholder="Your name" maxLength={150}/></Field><Field label="Existing customer number" hint="Leave blank for a first-time customer; the server reuses existing IDs for a matching billing identity."><input value={contact.existingCustomerNumber} onChange={e=>changeContact('existingCustomerNumber',e.target.value.replace(/\D/g,'').slice(0,10))} placeholder="10 digits, if known" inputMode="numeric"/></Field></>}
-            </div>
-          </div>
-        </div>}
+    <section className="hero"><div className="container hero-body">
+      <div className="hero-copy"><span className="eyebrow"><span className="light-dot"/> 360° VIDEO PERFORMANCE TECHNOLOGY</span><h1>Build your system.<br/><em>See every angle.</em></h1><p>Tell us what you need. We'll compare individual-item prices, find the best complete package and show you everything you get.</p><div className="hero-trust"><span><CheckCircle2 size={16}/> Simple quantities</span><span><CheckCircle2 size={16}/> Transparent pricing</span><span><CheckCircle2 size={16}/> No signup required</span></div></div>
+      <div className="hero-display" aria-hidden="true"><div className="scope scope-one"/><div className="scope scope-two"/><div className="scope scope-three"/><div className="scope-center"><Camera size={68} strokeWidth={1.5}/></div><div className="display-label label-a"><Zap size={17}/> Every angle</div><div className="display-label label-b"><Target size={17}/> Built for your team</div></div>
+    </div></section>
 
-        {step===1&&<div className="step-content">
-          <div className="question-block"><div className="question-label"><span className="question-number">01</span><div><h3>How many camera angles per team?</h3><p>All kits include a configured processing laptop.</p></div></div>
-            <RadioSet<number> name="camera-count" columns={3} value={answers.camerasPerTeam} onChange={v=>update('camerasPerTeam',v)} items={[{value:1,label:'1 camera',detail:'Core 360 coverage'},{value:2,label:'2 cameras',detail:'Multiple perspectives'},{value:3,label:'3 cameras',detail:'Added camera capacity'}]}/>
-          </div>
-          <div className="question-block"><div className="question-label"><span className="question-number">02</span><div><h3>Which accessories do you need for each team?</h3><p>We only add what your selected package does not already include.</p></div></div>
-            <div className="dual-questions"><div><span className="micro-label">Sport-specific mount</span><RadioSet<'yes'|'no'> name="mounts" columns={2} value={answers.wantMount?'yes':'no'} onChange={v=>update('wantMount',v==='yes')} items={[{value:'yes',label:'Yes'},{value:'no',label:'No'}]}/></div><div><span className="micro-label">Protective case</span><RadioSet<'yes'|'no'> name="cases" columns={2} value={answers.wantCase?'yes':'no'} onChange={v=>update('wantCase',v==='yes')} items={[{value:'yes',label:'Yes'},{value:'no',label:'No'}]}/></div></div>
-          </div>
-          <div className="question-block"><div className="question-label"><span className="question-number">03</span><div><h3>What level of support would you like?</h3><p>Premium plans already include priority assistance and premium protection.</p></div></div>
-            <div className="dual-questions"><div><span className="micro-label">Priority technical support</span><RadioSet<'yes'|'no'> name="priority-support" columns={2} value={answers.priority?'yes':'no'} onChange={v=>update('priority',v==='yes')} items={[{value:'no',label:'Standard'},{value:'yes',label:'Priority'}]}/></div><div><span className="micro-label">Premium equipment protection</span><RadioSet<'yes'|'no'> name="premium-protection" columns={2} value={answers.protection?'yes':'no'} onChange={v=>update('protection',v==='yes')} items={[{value:'no',label:'Not needed'},{value:'yes',label:'Yes'}]}/></div></div>
-          </div>
-          <div className="question-block"><div className="question-label"><span className="question-number">04</span><div><h3>Cloud video needs</h3><p>Retained storage is your total library capacity; delivery is monthly streams plus downloads.</p></div></div>
-            <div className="form-grid">
-              <Field label="Total retained storage"><select value={answers.storageGb} onChange={e=>update('storageGb',Number(e.target.value))}>{[500,1000,2000,5000,10000,20000,50000].map(v=><option value={v} key={v}>{v>=1000?(v/1000)+' TB':v+' GB'} retained</option>)}</select></Field>
-              <Field label="Monthly viewing + download"><select value={answers.deliveryGb} onChange={e=>update('deliveryGb',Number(e.target.value))}>{[100,250,500,1000,2500,5000,10000].map(v=><option value={v} key={v}>{v.toLocaleString()} GB / month</option>)}</select></Field>
-              <Field label="Keep videos available for"><select value={answers.retentionMonths} onChange={e=>update('retentionMonths',Number(e.target.value))}><option value={12}>12 months</option><option value={24}>24 months</option><option value={36}>36 months (custom quote)</option></select></Field>
-              <Field label="Annual training required"><select value={answers.trainingHours} onChange={e=>update('trainingHours',Number(e.target.value))}>{[0,1,2,3,4,5,8,10,15,20].map(v=><option key={v} value={v}>{v===0?'No additional training':v+' hours, all teams'}</option>)}</select></Field>
-            </div>
-          </div>
-          <div className="question-block last"><div className="question-label"><span className="question-number">05</span><div><h3>Can your program use metered cloud overages?</h3><p>Usage beyond included allowances is estimated at $0.25 per GB per month for storage and $0.25 per delivered GB.</p></div></div>
-            <RadioSet<'yes'|'no'> name="overages" columns={2} value={answers.acceptOverages?'yes':'no'} onChange={v=>update('acceptOverages',v==='yes')} items={[{value:'yes',label:'Yes, show an estimate'},{value:'no',label:'No, fixed included limits only'}]}/>
-          </div>
-        </div>}
+    <div className="container layout" id="build"><div className="builder">
+      <div className="step-navigation"><div><span className="step-tag">01 · PROGRAM</span><span className="step-tag">02 · EQUIPMENT</span><span className="step-tag">03 · SERVICE</span><span className="step-tag">04 · RESULTS</span></div><button onClick={reset} className="text-button" type="button"><RotateCcw size={14}/> Reset all</button></div>
 
-        {step===2&&<div className="step-content">
-          <div className="question-block"><div className="question-label"><span className="question-number">01</span><div><h3>Would you like any additional equipment or services?</h3><p>Everything here is optional, and built-in package features will not be double-charged.</p></div></div>
-            <div className="extras-head"><span><Camera size={17}/> Additional hardware</span><span>Quantity</span></div>
-            <div className="extras-grid">{ADDONS.filter(a=>a.category==='hardware'&&(showAllExtras||['laptop','camera','mount','bundle','case','ipad'].includes(a.id))).map(a=><div key={a.id} className="addon-card"><div className="addon-copy"><strong>{a.name}</strong><span>{a.detail}</span><b>{price(a.price)}</b></div><QtyControl value={answers.addonQuantities[a.id]||0} onChange={v=>setAddon(a.id,v)}/></div>)}</div>
-            <button className="plain-more" type="button" onClick={()=>setShowAllExtras(p=>!p)}>{showAllExtras?'Show fewer hardware options':'Show all hardware options'} <ChevronDown size={16} className={showAllExtras?'flip':''}/></button>
-            <div className="extras-head services"><span><Headphones size={17}/> Services & annual options</span><span>Quantity</span></div>
-            <div className="extras-grid">{ADDONS.filter(a=>a.category!=='hardware').map(a=><div key={a.id} className="addon-card"><div className="addon-copy"><strong>{a.name}</strong><span>{a.detail}</span><b>{price(a.price)} {a.category==='annual'&&'/yr'}</b></div><QtyControl value={answers.addonQuantities[a.id]||0} onChange={v=>setAddon(a.id,v)}/></div>)}</div>
-          </div>
-          <div className="question-block"><div className="question-label"><span className="question-number">02</span><div><h3>How would you prefer to pay?</h3><p>Hardware is a one-time purchase. Subscription can be prepaid annually or paid monthly.</p></div></div>
-            <RadioSet<QuoteAnswers['billing']> name="billing-plan" columns={2} value={answers.billing} onChange={v=>update('billing',v)} items={[{value:'annual',label:'Annual prepay',detail:'Best total annual value'},{value:'monthly',label:'Monthly service',detail:'Higher annualized service rate'}]}/>
-          </div>
-          <div className="question-block"><div className="question-label"><span className="question-number">03</span><div><h3>Where will the equipment be delivered?</h3><p>Hardware sales tax depends on the delivery jurisdiction. Rates must include any applicable local taxes.</p></div></div>
-            <div className="form-grid"><Field label="Shipping state"><select value={answers.shippingState} onChange={e=>{update('shippingState',e.target.value);update('taxVerified',false);}}><option value="">Select a state</option>{STATES.map(([code,name])=><option value={code} key={code}>{name}</option>)}</select></Field>
-              <Field label="Shipping ZIP code"><input inputMode="numeric" autoComplete="postal-code" pattern="[0-9]{5}" maxLength={5} value={answers.shippingZip} onChange={e=>{update('shippingZip',e.target.value.replace(/\D/g,'').slice(0,5));update('taxVerified',false);}} placeholder="5-digit ZIP code"/></Field></div>
-            {mode==='staff'?<div className="tax-panel"><div className="tax-panel-head"><ShieldCheck size={19}/><div><strong>Representative tax verification</strong><span>Never treat missing rates as 0% tax. Confirm jurisdiction, registration and local rates.</span></div></div>
-              <div className="form-grid"><Field label="Combined state + local rate (%)" hint="Example: enter 7.5 for 7.5%. A zero rate requires explicit verification."><input inputMode="decimal" type="number" min="0" max="20" step="0.001" value={answers.combinedTaxRate??''} onChange={e=>{update('combinedTaxRate',e.target.value===''?null:Number(e.target.value));update('taxVerified',false);}} placeholder="Required before saving"/></Field>
-                <Field label="Rate source / reference" hint="e.g., jurisdiction lookup, date verified and internal approval"><input value={answers.taxSource} maxLength={300} onChange={e=>{update('taxSource',e.target.value);update('taxVerified',false);}} placeholder="Enter verified source and date"/></Field>
-                <Field label="Additional freight / travel ($)"><input type="number" inputMode="decimal" min="0" max="500000" step="0.01" value={answers.freightTravel} onChange={e=>update('freightTravel',Math.max(0,Number(e.target.value)||0))}/></Field>
-                <div className="tax-verification"><label className="check-row"><input type="checkbox" checked={answers.taxVerified} onChange={e=>update('taxVerified',e.target.checked)}/><span>I verified the destination rate, tax collection obligation and taxable hardware allocation for this draft.</span></label></div>
-              </div>
-              <div className="tax-message"><Info size={15}/> Only tangible hardware lines are included in this app&apos;s tax base. State rules on bundled services, freight, exemptions and nexus still require accounting review.</div>
-            </div>:<div className="tax-panel"><div className="tax-panel-head"><MapPin size={19}/><div><strong>Tax gets added after location verification.</strong><span>We separate equipment sales tax from non-hardware services. No estimated rate will be invented.</span></div></div></div>}
-          </div>
-        </div>}
+      <section className="card" aria-labelledby="program-heading"><div className="section-title"><span className="number">01</span><div><span className="kicker">LET'S START HERE</span><h2 id="program-heading">Who are we building for?</h2><p>One team or an entire athletic department—your choices update the price instantly.</p></div></div>
+        <Radio label="Organization type" items={[{value:'school',name:'School / College'},{value:'club',name:'Club / Academy'},{value:'organization',name:'Athletic department'},{value:'other',name:'Other'}]} value={answers.buyerType} onChange={v=>update('buyerType',v)}/>
+        <div className="setting-row"><div><strong>How many named teams?</strong><small>Varsity, JV, men's and women's teams each count separately.</small></div><Quantity label="Teams" min={1} max={50} value={answers.teams} onChange={changeTeamCount}/></div>
+        <div className="toggle-card"><label><input type="checkbox" checked={answers.departmentAdmin} onChange={e=>update('departmentAdmin',e.target.checked)}/><span><strong>One shared department account</strong><small>Central team management and pooled cloud capacity.</small></span></label></div>
+        {answers.teams>10&&<p className="warning"><Info size={16}/> More than 10 named teams requires custom department pricing.</p>}
+      </section>
 
-        {step===3&&<div className="step-content results-section" id="packages">
-          <div className="quote-identity"><div><span>PREPARED FOR</span><strong>{contact.organization||"Your sports program"}</strong><small>{contact.teamNames||`${answers.teams} named team${answers.teams===1?"":"s"}`}{contact.billingName?` / ${contact.billingName}`:""}</small></div><div className="quote-identity-right"><span>{saved?"SAVED DRAFT INVOICE":"INTERACTIVE QUOTE PREVIEW"}</span><strong>{saved?saved.invoiceNumber:"NOT ISSUED"}</strong><small>{answers.billing==="annual"?"Annual prepay":"Monthly service"} / catalog {CATALOG_DATE}</small></div></div>
-          {recommended?<div className="result-hero"><div className="result-icon"><Sparkles size={23}/></div><div><div className="result-eyebrow">YOUR RECOMMENDED MATCH</div><h3>{recommended.package.title}</h3><p>Lowest estimated first-year cost among packages meeting your requirements, including automatically required accessories.</p></div><div className="result-score"><strong>{price(recommended.firstYearBeforeTax)}</strong><span>year one, before tax</span></div></div>:<div className="result-hero custom"><div className="result-icon"><CircleHelp size={23}/></div><div><div className="result-eyebrow">SPEAK WITH OUR TEAM</div><h3>Your needs deserve a custom package.</h3><p>One or more requirements exceed published package entitlements. A ProTracer representative can scope the right option.</p></div></div>}
-          <div className="results-heading"><div><h3>Compare every option</h3><p>Totals are adjusted to your team count and requested setup. Tap a card to choose an eligible alternative.</p></div><span className="package-count">4 packages</span></div>
-          <div className="package-grid">{recommendations.comparisons.map(q=><PackageCard key={q.package.id} item={q} recommended={recommended?.package.id===q.package.id} selected={chosen?.package.id===q.package.id} onSelect={x=>setSelection(x)}/>)}</div>
-          {chosen&&<><div className="detailed-heading"><div><span className="eyebrow">YOUR SELECTED PACKAGE</span><h3>{chosen.package.title} quote breakdown</h3></div><button className="details-toggle" type="button" onClick={()=>setDetailsOpen(p=>!p)}>{detailsOpen?'Hide details':'See itemized details'} <ChevronDown size={17} className={detailsOpen?'flip':''}/></button></div>
-            {detailsOpen&&<div className="breakdown-card"><div className="breakdown-header"><span>Item</span><span>Amount</span></div>{chosen.lines.filter(l=>l.amount>0).map((l,i)=><div key={`${l.name}-${i}`} className="breakdown-row"><span><b>{l.name}</b><small>{l.quantity} x {price(l.unitPrice)} &middot; {l.period==='once'?'One-time':l.period==='year'?'Annual':'Monthly'}{l.taxable?' / taxable equipment':' / service'}</small></span><strong>{price(l.amount)}</strong></div>)}
-              {chosen.estimatedUsageAnnual>0&&<div className="breakdown-row faded"><span><b>Estimated annual cloud overages</b><small>Measured usage only, not due at signing</small></span><strong>{price(chosen.estimatedUsageAnnual)}</strong></div>}
-              <div className="breakdown-row faded"><span><b>Additional freight / travel</b><small>Non-hardware estimate, subject to local tax review</small></span><strong>{price(answers.freightTravel)}</strong></div>
-              <div className="breakdown-row tax-highlight"><span><b>Hardware-only sales tax</b><small>{chosen.taxReady?`${answers.shippingState} ${answers.shippingZip} / ${answers.combinedTaxRate}% verified`:'Pending verified destination and combined state/local rate'} &middot; Taxable goods {price(chosen.taxableBase)}</small></span><strong>{chosen.taxAmount===null?'Pending':price(chosen.taxAmount)}</strong></div>
-              <div className="breakdown-totals"><div><span>Due at signing {chosen.taxReady?'incl. tax':'before tax'}</span><strong>{price(chosen.dueNow??chosen.dueBeforeTax)}{!chosen.taxReady&&<sup> + tax</sup>}</strong></div><div><span>Estimated first year {chosen.taxReady?'incl. tax':'before tax'}</span><strong>{price(chosen.firstYearTotal??chosen.firstYearBeforeTax)}{!chosen.taxReady&&<sup> + tax</sup>}</strong></div></div>
-              <p className="disclaimer">Draft estimate only. Subscription fees and metered usage are separately identified; shipping, taxability, registration, and bundled setup treatment must be verified before a final customer invoice.</p>
-            </div>}
-            <div className="result-actions"><button className="ghost-action" type="button" onClick={()=>window.print()}><Printer size={18}/> Print / save PDF</button>{mode==='staff'?<button className="primary-action" type="button" disabled={!chosen.eligible} onClick={()=>{setSaveOpen(true);setSaveError('');}}><FileText size={18}/> Save draft invoice <ArrowRight size={18}/></button>:<a className="primary-action" href="https://www.protracerofficial.com/" target="_blank" rel="noopener noreferrer">Speak with ProTracer <ArrowRight size={18}/></a>}</div>
-            {saved&&<div className="saved-confirmation" role="status"><CheckCircle2 size={22}/><div><b>Draft invoice saved: {saved.invoiceNumber}</b><span>Customer #{saved.customerNumber}. No payment was collected. Your draft is recorded in the server database.</span></div></div>}
-            <div className="retention-note"><Info size={17}/><span>Have 11+ teams, specialized retention requirements, or a custom mounting situation? Choose a tailored quote rather than treating an ineligible package price as final.</span></div>
-          </>}
-        </div>}
-        <div className="wizard-footer"><button type="button" className="back-button" onClick={()=>step===0?(setAnswers(DEFAULT_ANSWERS),setContact(EMPTY_CONTACT),setSelection(null)):setStep(step-1)}>{step===0?<RotateCcw size={16}/>:<ArrowLeft size={17}/>} {step===0?'Start over':'Previous step'}</button>{step<3&&<button type="button" className="next-button" onClick={()=>{setStep(s=>Math.min(3,s+1));window.scrollTo({top:260,behavior:'smooth'});}}> {step===2?'See my matches':'Continue'} <ArrowRight size={18}/></button>}{step===3&&<button type="button" className="next-button" onClick={()=>setStep(0)}>Refine answers <SlidersHorizontal size={17}/></button>}</div>
+      <section className="card" aria-labelledby="equipment-heading"><div className="section-title"><span className="number">02</span><div><span className="kicker">SELECT EXACT QUANTITIES</span><h2 id="equipment-heading">What equipment do you need?</h2><p>Enter the <strong>total needed</strong>, not extra items on top of a package.</p></div></div>
+        <div className="rule"><BadgeCheck size={23}/><span><strong>One camera = one included mount + recording card</strong><small>Every package includes a sport mount and microSD card per camera. We credit these automatically so you never pay twice.</small></span></div>
+        <div className="quick-set"><span>Quick start</span><button type="button" onClick={()=>{setAnswers(a=>({...a,hardwareNeeds:{...(a.hardwareNeeds??DEFAULT_HARDWARE_NEEDS),cameras:a.teams,mounts:a.teams,sdCards:a.teams,laptops:a.teams,tripods:a.teams}}));setSelected(null);}}>1 camera / team</button><button type="button" onClick={()=>{setAnswers(a=>({...a,hardwareNeeds:{...(a.hardwareNeeds??DEFAULT_HARDWARE_NEEDS),cameras:a.teams*2,mounts:a.teams*2,sdCards:a.teams*2,laptops:a.teams,tripods:a.teams}}));setSelected(null);}}>2 cameras / team</button></div>
+        <div className="equipment-grid">{EQUIPMENT.map(e=>{const Icon=e.icon;return <div className="equipment-row" key={e.key}><div className="equipment-icon"><Icon size={20}/></div><div className="equipment-copy"><strong>{e.title}</strong><small>{e.hint}</small></div><Quantity label={e.title} min={e.key==='cameras'?1:0} max={100} value={h[e.key]} onChange={v=>changeHardware(e.key,v)}/></div>;})}</div>
+        <p className="helper"><Info size={15}/> Camera changes adjust mount and card quantities automatically; you can edit either independently.</p>
+      </section>
+
+      <section className="card" aria-labelledby="service-heading"><div className="section-title"><span className="number">03</span><div><span className="kicker">MAKE IT YOURS</span><h2 id="service-heading">Cloud, support and billing</h2><p>Choose the capabilities that matter to your program.</p></div></div>
+        <div className="select-grid"><label>Cloud storage<select value={answers.storageGb} onChange={e=>update('storageGb',Number(e.target.value))}>{[500,1000,2000,3000,5000,10000,15000,20000,50000].map(v=><option key={v} value={v}>{v<1000?`${v} GB`:`${fmt(v/1000)} TB`}</option>)}</select></label>
+          <label>Monthly video viewing / downloads<select value={answers.deliveryGb} onChange={e=>update('deliveryGb',Number(e.target.value))}>{[100,250,500,750,1000,1250,2000,2500,5000,10000].map(v=><option key={v} value={v}>{fmt(v)} GB / month</option>)}</select></label>
+          <label>Video retention<select value={answers.retentionMonths} onChange={e=>update('retentionMonths',Number(e.target.value))}><option value={12}>12 months</option><option value={24}>24 months</option><option value={36}>36 months (custom)</option></select></label>
+          <label>Requested training hours<div className="qty-wrapper"><Quantity label="Training hours" value={answers.trainingHours} max={100} onChange={v=>update('trainingHours',v)}/></div></label>
+        </div>
+        <div className="feature-toggles"><label><input type="checkbox" checked={answers.priority} onChange={e=>update('priority',e.target.checked)}/><span><strong>Priority technical support</strong><small>Premium + Department include this.</small></span></label><label><input type="checkbox" checked={answers.protection} onChange={e=>update('protection',e.target.checked)}/><span><strong>Premium equipment protection</strong><small>Included in Premium + Department.</small></span></label><label><input type="checkbox" checked={!answers.acceptOverages} onChange={e=>update('acceptOverages',!e.target.checked)}/><span><strong>Only show options within my cloud limits</strong><small>Request custom terms if your usage exceeds a package.</small></span></label></div>
+        <div className="billing-section"><span className="form-label">How would you prefer to pay for software service?</span><Radio label="Billing frequency" items={[{value:'annual',name:'Annual prepay',hint:'Discounted service + hardware upfront'},{value:'monthly',name:'Monthly service',hint:'Hardware upfront + 12 monthly payments'}]} value={answers.billing} onChange={v=>update('billing',v,false)}/></div>
+      </section>
+
+      <section className="card extras-card" aria-labelledby="extras-heading"><div className="section-title"><span className="number">+</span><div><span className="kicker">OPTIONAL, NEVER REQUIRED</span><h2 id="extras-heading">Need anything extra?</h2><p>These are <strong>additional items beyond the quantities above</strong>.</p></div></div>
+        <div className="extras-preview"><div className="extras-round"><Plus size={20}/></div><span><strong>{extraCount?`${extraCount} extra item${extraCount===1?'':'s'} added`:'No optional extras added'}</strong><small>{extraCount?`${price(extraEstimate)} at catalog rates before applicable tax`:'Add spare equipment, training, installation and more.'}</small></span><button type="button" className="button button-blue" onClick={()=>setExtrasOpen(true)}><Plus size={17}/> {extraCount?'Edit add-ons':'Add optional extras'}</button></div>
+        {pickedExtras.length>0&&<div className="extra-chips">{pickedExtras.map(x=><span key={x.id}>{answers.addonQuantities[x.id]} × {x.name}</span>)}</div>}
+      </section>
+
+      <section className="card tax-card" aria-labelledby="tax-heading"><div className="section-title"><span className="number"><MapPin size={20}/></span><div><span className="kicker">AUTOMATIC TAX ESTIMATE</span><h2 id="tax-heading">Where will the equipment ship?</h2><p>Enter a ZIP code <strong>or</strong> choose a state. We'll calculate the state's rate on tangible hardware.</p></div></div>
+        <div className="tax-fields"><label>ZIP code (auto-fills state)<input aria-label="US shipping ZIP code" placeholder="e.g. 33602" inputMode="numeric" maxLength={5} value={answers.shippingZip} onChange={e=>{setAnswers(a=>({...a,shippingZip:e.target.value.replace(/\D/g,'').slice(0,5),shippingState:''}));setZipCity('');setZipStatus('empty');}}/></label><span className="or">OR</span><label>Shipping state<select aria-label="Shipping state" value={answers.shippingState} onChange={e=>setState(e.target.value)}><option value="">Choose a state</option>{STATES.map(([code,name])=><option value={code} key={code}>{name}</option>)}</select></label></div>
+        {zipStatus==='checking'&&<p className="state-status" aria-live="polite">Finding the state for ZIP {answers.shippingZip}…</p>}
+        {zipStatus==='found'&&<p className="state-status success" aria-live="polite"><CheckCircle2 size={15}/> Found {zipCity}, {stateLabel(answers.shippingState)}.</p>}
+        {zipStatus==='not-found'&&<p className="state-status" role="status">ZIP not found. You can still select the state manually.</p>}
+        {zipStatus==='error'&&<p className="state-status" role="status">ZIP lookup is unavailable. Choose the state manually to calculate state-level tax.</p>}
+        <div className="tax-estimate"><div><span>Estimated state tax rate</span><strong>{stateRate===null?'—':`${stateRate}%`}</strong></div><div><span>On selected package hardware</span><strong>{configured&&configured.taxAmount!==null?price(configured.taxAmount):'Select state'}</strong></div></div>
+        <p className="tax-disclaimer"><Info size={15}/> This is a <strong>state-only</strong> estimate. ZIP codes do not identify an exact city/county tax jurisdiction. Local and district sales taxes, exemptions, freight and any special rules are <strong>not included</strong>. No sales tax is estimated on subscriptions, training or other separately listed services. Final tax is confirmed when quoted. <a href={STATE_RATE_SOURCE_URL} target="_blank" rel="noopener noreferrer">Rate source: {STATE_RATE_SOURCE}</a>.</p>
+      </section>
+
+      <section className="card packages-card" id="packages" aria-labelledby="packages-heading"><div className="section-title"><span className="number">04</span><div><span className="kicker">YOUR OPTIONS, SIDE BY SIDE</span><h2 id="packages-heading">Compare complete packages</h2><p>Each estimate adds only what's missing from your requested quantities.</p></div></div>
+        <div className="package-options">{recom.comparisons.map(q=>{const isPicked=configured?.package.id===q.package.id;const isBest=preferred?.package.id===q.package.id;const total=q.firstYearTotal??q.firstYearBeforeTax;const kits=q.package.id==='department'?Math.max(5,answers.teams):answers.teams*q.package.camerasPerTeam;return <button type="button" key={q.package.id} className={`package-option ${isPicked?'picked':''} ${!q.eligible?'not-eligible':''}`} disabled={!q.eligible} onClick={()=>setSelected(q.package.id)}><span className="package-option-icon">{isPicked?<Check size={16}/>:<Package size={17}/>}</span><span className="package-option-main"><span className="package-name">{q.package.title}{isBest&&<span className="tag">BEST FIT</span>}</span><span className="package-specs">{kits} camera{kits===1?'':'s'} + {kits} mounts · {fmt(q.includedStorageGb)} GB cloud</span>{!q.eligible&&<span className="package-error">Custom scope review required</span>}</span><span className="package-price"><strong>{q.eligible?price(total):'Custom'}</strong><small>{stateRate===null?'before tax':'incl. state-only tax'}</small></span></button>;})}</div>
+        <button className="expand-button" type="button" aria-expanded={compareOpen} onClick={()=>setCompareOpen(!compareOpen)}>Compare all included features <ChevronDown size={17} className={compareOpen?'up':''}/></button>
+        {compareOpen&&<div className="comparison-table-wrap"><table className="comparison-table"><thead><tr><th>Included</th>{PACKAGES.map(p=><th key={p.id}>{p.title}</th>)}</tr></thead><tbody>{[
+          ['Cameras / mounts',...PACKAGES.map(p=>String((p.id==='department'?Math.max(5,answers.teams):answers.teams*p.camerasPerTeam))+' / '+String(p.id==='department'?Math.max(5,answers.teams):answers.teams*p.mountPerTeam))],
+          ['Recording cards',...PACKAGES.map(p=>String(p.id==='department'?Math.max(5,answers.teams):answers.teams*p.camerasPerTeam))],
+          ['Pelican cases',...PACKAGES.map(p=>String(p.id==='department'?0:answers.teams*p.casePerTeam))],
+          ['Storage',...recom.comparisons.map(q=>fmt(q.includedStorageGb)+' GB')],
+          ['Video viewing/downloads',...recom.comparisons.map(q=>fmt(q.includedDeliveryGb)+' GB/mo')],
+          ['Retention',...PACKAGES.map(p=>p.retentionMonths+' months')],
+          ['Support',...PACKAGES.map(p=>p.priority?'Priority':'Standard')],
+          ['Premium protection',...PACKAGES.map(p=>p.protection?'Included':'Optional')],
+          ['Annual training',...PACKAGES.map(p=>p.trainingHoursPerTeam?`${p.trainingHoursPerTeam} hr / team`:'Optional')],
+        ].map((row,i)=><tr key={i}>{row.map((cell,j)=>j===0?<th scope="row" key={j}>{cell}</th>:<td key={j}>{cell}</td>)}</tr>)}</tbody></table></div>}
       </section>
     </div>
-    <aside className="sidebar"><div className="quote-preview"><div className="sidebar-top"><span className="sidebar-caption"><Layers3 size={16}/> YOUR LIVE QUOTE</span><div className="live-dot"><span/> Live</div></div><div className="selected-plan"><span>BEST FIT RIGHT NOW</span><h3>{recommended?.package.title||'Custom quote needed'}</h3><p>{recommended?.package.subtitle||'A representative can help define your scope.'}</p></div>
-      <div className="quote-divider"/><div className="preview-label">ESTIMATED YEAR ONE</div><div className="big-price">{chosen?price(chosen.firstYearBeforeTax):'Custom'}</div><p className="price-note">Before verified equipment sales tax</p>
-      <div className="preview-breakdown"><div><span><Camera size={16}/> Hardware & equipment</span><strong>{chosen?price(chosen.hardwareSubtotal):'-'}</strong></div><div><span><Headphones size={16}/> Annual service</span><strong>{chosen?price(chosen.annualService):'-'}</strong></div><div><span><ShieldCheck size={16}/> Hardware sales tax</span><strong>{chosen?.taxAmount!==null&&chosen?price(chosen.taxAmount):'Pending'}</strong></div><div><span><Clock3 size={16}/> Monthly option</span><strong>{chosen?price(chosen.monthlyBaseService):'-'}</strong></div></div>
-      {extraCount>0&&<div className="extras-counter"><CheckCircle2 size={16}/>{extraCount} optional add-on{extraCount===1?'':'s'} selected</div>}
-      <div className="quote-divider"/><div className="due-panel"><span>DUE AT SIGNING</span><strong>{chosen?price(chosen.dueNow??chosen.dueBeforeTax):'-'}</strong><small>{chosen?.taxReady?'Includes verified equipment tax':'Before tax. Delivery rate verification pending.'}</small></div>
-      <button className="sidebar-next" type="button" onClick={()=>step<3?setStep(3):window.print()}>{step<3?'Preview all packages':'Print this quote'} <ArrowRight size={18}/></button><p className="sidebar-footnote">No obligation to purchase. Pricing snapshot {CATALOG_DATE}. Includes estimated requested configuration; custom requests may require review.</p></div>
-      <div className="sidebar-info"><div className="info-icon"><BadgeCheck size={20}/></div><strong>Clarity at every step</strong><p>We show exactly what you receive, what repeats annually, and what&apos;s taxed. No surprise add-ons.</p></div>
-    </aside></div>
 
-    <footer className="site-footer"><div className="layout footer-inside"><div className="brand small"><span className="brand-symbol"><Target size={19}/></span><span className="brand-text">PRO<span>TRACER</span><small>SALES STUDIO</small></span></div><div>Purpose-built for confident sports-tech decisions. &copy; {new Date().getFullYear()} ProTracer.</div><a href="https://www.protracerofficial.com/" target="_blank" rel="noopener noreferrer">ProTracer official site <ArrowRight size={14}/></a></div></footer>
+    <aside className="quote-column" aria-label="Live quote estimate"><div className="quote-box">
+      <div className="quote-eyebrow"><span className="live-dot"/> YOUR LIVE ESTIMATE <small>USD</small></div>
+      <div className="recommendation"><div className="recommend-chip"><Sparkles size={16}/> OUR RECOMMENDATION</div><h2>{preferred?.package.title??'Custom package'}</h2><p>{preferred?pitch(preferred,answers):'Your requirements need a custom conversation with ProTracer.'}</p></div>
+      {configured&&<div className="bonus"><h3><BadgeCheck size={17}/> More value you receive</h3><ul>{valueBonuses(configured,answers).map(s=><li key={s}><CheckCircle2 size={16}/>{s}</li>)}</ul></div>}
+      {selectionDiffers&&<div className="selection-banner">Viewing your selection: <strong>{configured?.package.title}</strong> · Recommended: <strong>{preferred?.package.title}</strong></div>}
+      <div className="compare-prices">
+        <div className="compare-price"><span>INDIVIDUAL CATALOG ITEMS</span><strong>{price(independent.firstYear+(independentStateTax??0))}</strong><small>Hardware + Basic software reference · {stateRate===null?'before tax':'incl. state-only tax'} · not sold as a standalone bundle</small></div>
+        <div className="compare-price"><span>RECOMMENDED COMPLETE PACKAGE</span><strong>{preferred?price(baseYear(preferred,answers)):'Custom'}</strong><small>Published package base, before extras or tax</small></div>
+        <div className="compare-price final"><span>YOUR CUSTOMIZED PACKAGE</span><strong>{firstYear===null?'Custom quote':price(firstYear)}</strong><small>{stateRate===null?'First year before tax':'First year including state tax estimate'} · upgrades + extras included</small></div>
+      </div>
+      {configured&&<><div className="quote-breakdown"><PriceRow label="Hardware + selected upgrades" value={price(configured.hardwareSubtotal)}/><PriceRow label="One-time professional services" value={price(configured.oneTimeServices)}/><PriceRow label={answers.billing==='annual'?'Annual service (prepaid)':'Monthly base service'} value={price(answers.billing==='annual'?configured.annualService:configured.monthlyBaseService)}/>{answers.billing==='monthly'&&configured.annualExtras>0&&<PriceRow label="Additional annual services" value={price(configured.annualExtras)}/>}<PriceRow label="State-only hardware tax estimate" value={configured.taxAmount===null?'Choose state':price(configured.taxAmount)} soft/></div>
+        <div className="due-box"><span>ESTIMATED DUE UPFRONT</span><strong>{price(configured.dueNow??configured.dueBeforeTax)}</strong><small>{configured.taxAmount===null?'Before sales tax.':'Includes estimated state-only hardware tax.'} {answers.billing==='monthly'?'Hardware and first service month.':'Hardware and prepaid annual service.'}</small></div>
+        <div className="billing-foot"><CreditCard size={16}/><span>{answers.billing==='annual'?'Annual payment saves on recurring service.':'Twelve monthly service installments; hardware is NOT financed.'}</span></div>
+        {configured.estimatedUsageAnnual>0&&<p className="overage-message"><Info size={15}/> {price(configured.estimatedUsageAnnual)} of annual usage overages are estimated in the first-year number, but only charged if actually incurred.</p>}
+        <button type="button" className="expand-button lines-link" aria-expanded={breakdownOpen} onClick={()=>setBreakdownOpen(!breakdownOpen)}>See every line item <ChevronDown className={breakdownOpen?'up':''} size={17}/></button>
+        {breakdownOpen&&<div className="quote-lines">{configured.lines.filter(x=>x.amount>0).map((l,i)=><div key={`${l.name}-${i}`}><span>{l.name}<small>{l.quantity} × {price(l.unitPrice)} · {l.period==='year'?'yearly':'one-time'}</small></span><strong>{price(l.amount)}</strong></div>)}{configured.estimatedUsageAnnual>0&&<div><span>Usage overages (estimate)<small>Only billed for actual use</small></span><strong>{price(configured.estimatedUsageAnnual)}</strong></div>}</div>}
+      </>}
+      <div className="quote-actions"><button className="button button-light" type="button" onClick={()=>window.print()}><Printer size={18}/> Print</button><button className="button button-blue" type="button" onClick={copySummary}><ClipboardCopy size={17}/>{copied?'Copied!':'Copy summary'}</button></div>
+      <a className="contact-link" href="https://www.protracerofficial.com/" target="_blank" rel="noopener noreferrer">Explore ProTracer <ArrowRight size={17}/></a>
+      <p className="legal">Illustrative, nonbinding package estimate. State-only tax shown when selected; local taxes and freight are extra. Taxes apply here only to tangible equipment and one-time bundled equipment/setup charges pending final tax review. No account or invoice is created.</p>
+    </div></aside></div>
 
-    {saveOpen&&<div className="modal-backdrop" role="presentation" onMouseDown={e=>{if(e.target===e.currentTarget)setSaveOpen(false);}}><div className="save-modal" role="dialog" aria-modal="true" aria-labelledby="saveTitle"><div className="modal-heading"><div><span className="eyebrow">PROTRACER SALES DESK</span><h2 id="saveTitle">Save this draft invoice</h2></div><button type="button" aria-label="Close" onClick={()=>setSaveOpen(false)}><X size={20}/></button></div><p>The system allocates a unique 10-digit customer number and stores a separate draft for every invoice. Nothing is sent or charged.</p>
-      <div className="modal-summary"><span>{chosen?.package.title}</span><strong>{chosen?price(chosen.dueNow??chosen.dueBeforeTax):'-'}</strong></div>
-      {!(contact.billingName&&contact.organization&&contact.teamNames&&contact.email&&contact.representative)&&<div className="modal-warning"><Info size={17}/> Complete billing contact, organization, separately named teams, email and rep name in Step 1.</div>}
-      {!chosen?.taxReady&&<div className="modal-warning"><Info size={17}/> Return to Step 3 and verify state, ZIP, rate and source. Zero tax is not assumed.</div>}
-      <Field label="Representative access key" hint="Your administrator sets this in the deployment environment. It is not stored in your browser."><input type="password" autoComplete="off" value={repKey} onChange={e=>setRepKey(e.target.value)} placeholder="Enter staff access key"/></Field>
-      {saveError&&<div className="modal-error" role="alert">{saveError}</div>}
-      <div className="modal-actions"><button type="button" className="back-button" onClick={()=>setSaveOpen(false)}>Cancel</button><button type="button" className="primary-action" disabled={!readyForSaving||!repKey||saving} onClick={saveDraft}>{saving?'Saving...':'Save draft securely'} <LockKeyhole size={17}/></button></div></div></div>}
+    <footer className="footer"><div className="container footer-inner"><div><img src={`${process.env.NEXT_PUBLIC_BASE_PATH||''}/protracer-logo.png`} alt="ProTracer"/><span>Package Builder · Rates as of {CATALOG_DATE}</span></div><a href="https://www.protracerofficial.com/" target="_blank" rel="noopener noreferrer">ProTracerOfficial.com <ArrowRight size={15}/></a></div></footer>
+
+    {extrasOpen&&<div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setExtrasOpen(false);}}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="extras-modal-title"><div className="modal-top"><div><span className="kicker">BUILD YOUR CUSTOM SYSTEM</span><h2 id="extras-modal-title">Add optional extras</h2><p>These quantities are in <strong>addition</strong> to the equipment you entered above.</p></div><button className="icon-button" onClick={()=>setExtrasOpen(false)} aria-label="Close add-ons" type="button"><X size={22}/></button></div><div className="modal-content">{(['hardware','service','annual'] as const).map(group=><div className="addon-group" key={group}><h3>{group==='hardware'?'Extra equipment':group==='service'?'Professional services':'Additional annual options'}</h3>{ADDONS.filter(x=>x.category===group).map(a=><div className="addon-row" key={a.id}><div><strong>{a.name}</strong><small>{a.detail}</small><span>{price(a.price)}{group==='annual'?'/year':''}</span></div><Quantity label={a.name} value={answers.addonQuantities[a.id]??0} onChange={v=>changeAddon(a.id,v)}/></div>)}</div>)}</div><div className="modal-bottom"><span><strong>{extraCount} selected</strong><small>Catalog subtotal {price(extraEstimate)} before tax</small></span><button className="button button-blue" onClick={()=>setExtrasOpen(false)} type="button"><Check size={17}/> Apply extras</button></div></div></div>}
   </main>;
 }

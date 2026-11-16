@@ -1,47 +1,52 @@
-# ProTracer Sales Studio
+# ProTracer Package Builder
 
-A responsive, guided sports-technology package finder and draft-invoice application for ProTracer. Built with **Next.js, TypeScript, React, PostgreSQL**, and a transparent quote engine. Designed for customers **and** sales representatives.
+A public, customer-first configuration and comparison experience for ProTracer. Customers (or a sales representative sitting with a customer) can build a video setup, choose exact hardware quantities, add extras, estimate **state-level tax on equipment**, and compare individual catalog-item pricing with a fitted ProTracer package. There is **no sign-in, customer account, invoice, database, API key, payment, or backend**.
 
-## What the app does
+![ProTracer](public/protracer-logo.png)
 
-- Friendly four-step questionnaire using actual radio buttons, dropdowns, stepper quantities and conditional inputs.
-- Recommends the lowest **eligible** estimated 12-month package, rather than the lowest sticker price.
-- Compares Basic Team, Team Plus, Premium Team and Athletic Department on cost, included cameras, retained storage, monthly delivery, retention, support and added equipment.
-- Handles up to 10 named teams under published Athletic Department rules, including sixth-through-tenth complete kit + annual license charges. Eleven or more teams / 36-month retention trigger custom review.
-- Automatically prices **required cameras, mounts, cases, priority support, protection and training**; uses the less expensive camera-plus-mount bundle where appropriate.
-- Supports optional add-ons and monthly vs annual service plans.
-- Separates **taxable physical hardware** from subscriptions, support, training, installation, technician days and travel services.
-- Shows **PENDING** sales tax until shipping state/ZIP and a verified combined state/local rate are supplied. The rep must attest to verification and record a rate source. Never silently assumes 0%.
-- Prints a clear quote as PDF through the browser's native Print > Save as PDF flow.
-- After the optional server configuration, sales reps can save secure draft invoices. The server allocates **unique 10-digit customer numbers** and unique invoice numbers in PostgreSQL, with transactional locks and unique constraints. Repeat quotes to the same normalized billing name+organization reuse the customer number.
+## How to use
 
-## Price source and date
+1. Choose the type of organization and number of named teams.
+2. Enter **the total quantities needed** for cameras, sport-specific mounts, recording cards, processing laptops, tripods, protective cases, iPads and local backup drives. One package camera includes one mount and one recording card. Camera changes automatically adjust requested mounts/cards, but users can edit them separately. Use the `1 camera / team` or `2 cameras / team` shortcuts to start faster.
+3. Set storage, video-delivery allowance, retention, support/protection, remote training and annual-prepay or monthly-service billing.
+4. Click **Add optional extras** for truly *additional* items beyond the quantities entered above. The catalog includes equipment, installation and annual options. An extra camera and a mount can automatically receive the published camera/mount bundle price.
+5. Enter a **five-digit ZIP** to auto-identify city/state, or choose a **state** directly. State tax is calculated automatically against the hardware taxable-base estimate. See the limitation below.
+6. Compare the **individually listed equipment + Basic software benchmark** (NOT a standalone approved offer), the **recommended base package**, and the **configured package with requested upgrades and extras**. Review bonus value not originally requested. Print or copy a summary. No data is submitted or saved.
 
-**November 16, 2026**: [ProTracer FY2027-FY2031 Financial Model](https://docs.google.com/spreadsheets/d/1uZ5NzyRCeiEFvYMgHyHUoPUxyccnkAPo34DlKnGdXBU/edit) and the [approved Sales Catalog](https://docs.google.com/spreadsheets/d/1T_Nji-h7TxxG-Z2I2qegqSw2jTnfdaGo9QRLgzUyExQ/edit).
+## Approved FY2027 package catalog (November 16, 2026)
 
-| Package | One-time equipment/setup* | Annual service | Annual-prepay first year | Monthly base service |
-| --- | ---: | ---: | ---: | ---: |
-| Basic Team | $4,592.80 | $2,102.20 | $6,695 | $207.60 |
-| Team Plus | $6,392.80 | $2,102.20 | $8,495 | $207.60 |
-| Premium Team | $6,751.60 | $3,743.40 | $10,495 | $366.20 |
-| Athletic Department | $19,995 | $22,995 | $42,990 | $2,299.50 |
+| Package | One-time equipment + setup | Annual service prepaid | Monthly service | Year 1 (annual plan) | Included cameras / mounts / cards |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Basic Team | $4,592.80 | $2,102.20 | $207.60 | **$6,695** | 1 / 1 / 1 |
+| Team Plus | $6,392.80 | $2,102.20 | $207.60 | **$8,495** | 2 / 2 / 2 |
+| Premium Team | $6,751.60 | $3,743.40 | $366.20 | **$10,495** | 2 / 2 / 2 |
+| Athletic Department (5 named teams) | $19,995 | $22,995 | $2,299.50 | **$42,990** | 5 / 5 / 5 |
 
-An Athletic Department includes **five complete team kits** and licenses; the sixth through tenth team adds $4,495 of one-time equipment + $4,495/year in service ($449.50/month). Consumption is pooled for Department; single-team packages are independent. For teams above ten, quote manually.
+The department plan includes five full Basic kits. Each additional sixth-through-tenth named team adds **$4,495 one-time** and **$4,495 annual service** (or $449.50 monthly), plus one camera, mount, card and laptop. More than ten named teams is a custom quote. All hardware is paid upfront; monthly installments apply only to software/service. Additional equipment does not grant an additional named team license.
 
-\* **Tax allocation review**: The financial model presents a single one-time **equipment/setup** price, not a separate hardware-versus-setup sales price. The prototype classifies that full **bundled** one-time amount as hardware for an *estimate*, pending finance confirmation. If you separately state non-taxable installation or setup services, split out that amount in `lib/catalog.ts`/`lib/quote.ts` before quoting final tax. Do not treat this as a tax-law determination.
+The catalog is derived from [ProTracer financial model FY2027–FY2031, November 16, 2026](https://docs.google.com/spreadsheets/d/1uZ5NzyRCeiEFvYMgHyHUoPUxyccnkAPo34DlKnGdXBU/edit). Package pricing is unchanged from the latest model, with the one-mount-per-camera policy incorporated.
 
-## Get it running locally
+## Automatic destination state tax estimation
 
-Requires Node.js 20+ and npm.
+- The state dropdown immediately applies the **state-level 2026 sales tax** to the sum of bundled equipment/setup plus tangible additional equipment. It does **not** tax separately listed subscriptions, training, installation, or other services for this *planning* estimate.
+- Entering a five-digit US ZIP automatically looks up city/state using the free [Zippopotam.us postal-code API](https://docs.zippopotam.us/docs/getting-started/) and applies that state's rate. If ZIP lookup is unavailable, customers can choose their state manually. ZIP is only used to identify state, **not** an exact sales-tax jurisdiction.
+- Rates originate in the [Tax Foundation State and Local Sales Tax Rates, Midyear 2026](https://taxfoundation.org/data/all/state/2026-sales-tax-rates-midyear/), state-level column as of July 1, 2026 (`lib/tax.ts`). 50 states and DC are covered; rates include fractional percentages where applicable.
+- **Important limitation:** Local, city, county, district, destination-based special taxes, tax exemptions, seller nexus, special taxability rules, and freight taxability are NOT in this estimate. Zero state tax in Alaska does **not** imply zero local tax. The source has periodic changes, so rates must be refreshed regularly.
+- The financial model does not state a separate taxable-hardware versus non-taxable-setup allocation for each equipment/setup bundle. Therefore, the full combined equipment/setup line is provisionally treated as taxable tangible equipment. ProTracer's CPA/tax service should verify or break out separately stated labor before a real binding invoice.
+- This app is **not** a tax compliance engine, order, payment link, or invoicing system. The actual full combined tax must be determined at checkout or a formal quote. Do not use state-only estimates as final collected taxes.
+
+## Run locally
+
+Requires Node.js 22 or newer.
 
 ```bash
 npm install
 npm run dev
 ```
 
-Visit http://localhost:3000. Without environment variables, **all package matching and print/PDF quote previews work**. Saving a permanent draft invoice will correctly return a configuration error instead of pretending a save succeeded.
+Open `http://localhost:3000`. There are no environment variables or database migrations.
 
-To run quote tests:
+## Static build (no Vercel required)
 
 ```bash
 npm test
@@ -49,54 +54,27 @@ npm run typecheck
 npm run build
 ```
 
-## Activate shared draft invoices
+The app produces static files in `out/`, deployable to GitHub Pages, S3/CloudFront, or any static host. No Next.js server is needed. For GitHub Pages *project* paths, set `NEXT_PUBLIC_BASE_PATH=/ProTracer-sales-dashboard` during build, e.g. `NEXT_PUBLIC_BASE_PATH=/ProTracer-sales-dashboard npm run build`. For a domain served at `/`, leave the variable unset. GitHub Pages publishing must be enabled separately in repository settings if desired; this commit does **not** deploy a site or alter a live domain.
 
-1. Create a managed PostgreSQL database (for example, Neon, Supabase, or another Vercel-compatible provider). Use a TLS-encrypted connection string.
-2. Execute `db/schema.sql` **once** in that database (your provider's SQL editor works).
-3. Generate a random **32+ character** staff key; do not reuse passwords.
-4. Copy `.env.example` to `.env.local` and set `DATABASE_URL` and `SALES_REP_SECRET`. On Vercel, add both as **server-only environment variables** (never `NEXT_PUBLIC_`).
-5. Restart the local app or redeploy. Visit `/api/health` to confirm `invoiceSavingConfigured: true`.
-6. In the app, select **Sales team**. Complete customer details and shipping location, verify an actual combined state/local sales tax rate, record the source, and confirm the review box. Select **Save draft invoice** and enter the staff key.
-7. A saved draft receives `PT-INV-YYYY-XXXXXX` and a unique 10-digit customer number. The backend writes an immutable quote snapshot into `draft_invoices` with `DRAFT` status. No email, payment or tax remittance occurs.
+`npm start` serves the generated `out/` files using a local static-server command.
 
-**Database uniqueness**: `customers.customer_number` is a primary key, `customers.identity_key` is unique, and the customer number is backed by a database sequence starting at `1000000001`. The service wraps customer lookup/upsert plus invoice insert in a single PostgreSQL transaction. Simultaneous users cannot cause duplicate numbers. A customer can have many invoices.
+## Important product behavior
 
-**Authorization note**: This starter uses a **single shared representative key** for staff draft saving. For a production multi-rep rollout, replace that mechanism with individual organization SSO, role-based permissions, audit logs and per-representative access control. Do **not** enable broad public create/update access to the database.
+- **Individual benchmark:** Hardware at published add-on list prices plus the Basic Team service as a reference. This is **not** a separately approved unbundled product offering and does not match the higher service, retention or department scope of every package.
+- **Recommended package:** An eligible package selected for its combination of total first-year cost and bundled benefits. For two-camera single-team requirements, Team Plus may be a better overall value than a slightly less expensive Basic package plus camera bundle because Team Plus also includes a Pelican case. Actual prices are never discounted by the recommendation heuristic.
+- **Configured package:** The chosen package plus just the quantities missing from its included equipment, plus customer-selected extras and service selections. Every package already includes **one mount and one recording card per included camera**. No automatic double-charge for included hardware or support/protection.
+- **Usage:** Storage and streaming/download allowance are separate meters. Projected overages at $0.25 per excess GB-month or delivered GB are *illustrative* and not due at signing.
+- **Tax totals:** Shown as **state-only estimates** when a state is selected; before-tax totals otherwise. State/local/district taxes, freight, exemptions and special quoting are not included.
 
-## State-by-state sales tax: important operational policy
+## Files
 
-The default customer-facing experience collects **shipping state and ZIP** and labels tax **Pending**. Staff can enter a **verified combined state + local jurisdiction rate** (including local districts) and a reference/source. Tax applies ONLY to lines tagged physical hardware; annual subscriptions, training, installation and other service lines are excluded under ProTracer's requested pricing policy. It does **not** guess a statewide rate, and it does not interpret an unknown rate as zero. **Actual state taxability can differ**: delivery charges, service bundles and software can be taxable in some states; nexus, registration, sourcing, shipping addresses and exemption certificates must be reviewed with your tax advisor. A 0% quote needs documented verification as well. Before nationwide commercial release, connect a maintained jurisdiction tax service (Stripe Tax, Avalara or TaxJar) and use correctly assigned product tax codes with an approved nexus/registration matrix.
+- `components/SalesApp.tsx`: customer UX, ZIP lookup, print and copy summary
+- `lib/catalog.ts`: packages and optional extras
+- `lib/quote.ts`: pricing, recommendation and quantity-credit logic
+- `lib/tax.ts`: state rates and hardware-only tax calculation
+- `lib/states.ts`: state names and codes
+- `tests/quote.test.ts`: contract-style price, equipment, tax and quote regression tests
+- `app/globals.css`: responsive ProTracer-branded design
+- `public/protracer-logo.png`: ProTracer transparent wordmark
 
-This application is a **quote preparation / draft invoice** tool, not a tax filing service or accounting ledger. Drafts are not tax invoices.
-
-## Deploy to Vercel (after publishing GitHub repository)
-
-1. Import the `protracer-sales` GitHub repository in Vercel.
-2. Vercel detects Next.js. Framework preset: **Next.js**. Project root: `/`.
-3. The public package finder can deploy without database credentials; do not suggest invoice saving is live until configured.
-4. For real rep saving, configure both `DATABASE_URL` and `SALES_REP_SECRET` for the intended environment, run `db/schema.sql`, then deploy.
-5. Protect sensitive routes using individual SSO before scaling rep access. Test calculations, staff authorization, and jurisdiction tax rules before accepting actual commercial orders.
-
-This application is standalone and does **not** modify the existing ProTracer CloudFront portal, the legacy Apps Script, the original financial model or the coaching repository.
-
-## Project structure
-
-```
-app/page.tsx             Customer/rep app entry point
-app/globals.css          Responsive visual design and print styles
-components/SalesApp.tsx  Four-step UI, package cards, itemized breakdown
-lib/catalog.ts           Approved package & add-on prices
-lib/quote.ts             Eligibility, bundle logic, subscriptions and hardware-only tax
-lib/states.ts            Destination state choices
-app/api/drafts/route.ts  Authenticated transactional draft save
-app/api/drafts/[id]/route.ts  Private draft record retrieval
-lib/db.ts                PostgreSQL connection
-lib/auth.ts              Staff access-key verification
-lib/api-schema.ts        Strict server validation
- db/schema.sql           Transactional DB schema / unique ID sequences
- tests/quote.test.ts     Key pricing, eligibility, bundle and tax tests
-```
-
-### Verification status
-
-The quoted package logic was tested in this authoring environment using the included tests. Build and browser verification additionally require npm dependencies to install successfully. This authoring environment could not reach the npm registry, so no successful `next build` or live deployment is claimed here.
+No customer personally identifying information is collected. ZIP lookup goes to Zippopotam.us only when a customer enters a five-digit ZIP. Print and clipboard operations run in the customer's browser.
