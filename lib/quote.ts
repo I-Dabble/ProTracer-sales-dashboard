@@ -29,6 +29,7 @@ export type QuoteAnswers = {
   acceptOverages: boolean;
   billing: Billing;
   serviceYears: 1 | 2;
+  useOwnIpad: boolean;
   addonQuantities: Partial<Record<ProductId, number>>;
   shippingState: string;
   shippingZip: string;
@@ -39,7 +40,7 @@ export const DEFAULT_ANSWERS: QuoteAnswers = {
   buyerType: 'school', teams: 1, camerasPerTeam: 1,
   wantMount:false, wantCase:false, priority:false, protection:false,
   trainingHours:0, storageGb:1000, deliveryGb:250, retentionMonths:12,
-  departmentAdmin:false, acceptOverages:true, billing:'annual', serviceYears:1,
+  departmentAdmin:false, acceptOverages:true, billing:'annual', serviceYears:1, useOwnIpad:false,
   addonQuantities:{}, shippingState:'', shippingZip:'', freightTravel:0,
 };
 
@@ -74,6 +75,7 @@ export type QuoteEvaluation = {
   includedStorageGb:number;
   includedDeliveryGb:number;
   includedCameras:number;
+  includedIpads:number;
   includedRetentionMonths:number;
   notes:string[];
   appliedPromotion: PromotionId;
@@ -133,8 +135,12 @@ export function evaluatePackage(a:QuoteAnswers,p:PackageDef,promotionId:Promotio
   const baseHardware=p.hardware*activeLicenseCount+extraTeams*DEPT_EXTRA.hardware;
   const baseAnnual=p.annualService*activeLicenseCount+extraTeams*DEPT_EXTRA.annual;
   const baseMonthly=p.monthlyService*activeLicenseCount+extraTeams*DEPT_EXTRA.monthly;
+  // Customer-supplied compatible iPads yield a $500 credit per named team kit.
+  // Internal scenario assumes $75 onboarding verification per customer-owned iPad.
+  const ipadByodCount=a.useOwnIpad?(dept?5+extraTeams:teams):0;
   lines.push(line(dept?'Athletic Department: five complete team kits':p.title+' equipment & setup',activeLicenseCount,p.hardware,'hardware','once',true));
   if(extraTeams) lines.push(line('Additional named team + complete kit',extraTeams,DEPT_EXTRA.hardware,'hardware','once',true));
+  if(ipadByodCount)lines.push(line('Bring your own compatible iPad credit',ipadByodCount,-500,'hardware','once',true));
   lines.push(line(p.title+' annual subscription',activeLicenseCount,p.annualService,'annual','year'));
   if(extraTeams)lines.push(line('Additional named team annual subscription',extraTeams,DEPT_EXTRA.annual,'annual','year'));
 
@@ -144,7 +150,7 @@ export function evaluatePackage(a:QuoteAnswers,p:PackageDef,promotionId:Promotio
   const includedMounts=dept ? 5+extraTeams : p.mountPerTeam*teams;
   const includedCards=includedCameras;
   const includedLaptops=dept ? 5+extraTeams : p.laptopPerTeam*teams;
-  const includedIpads=dept ? 5+extraTeams : p.ipadPerTeam*teams;
+  const includedIpads=(dept ? 5+extraTeams : p.ipadPerTeam*teams)-ipadByodCount;
   const includedTripods=dept ? 5+extraTeams : teams;
   const includedCases=dept ? 0 : p.casePerTeam*teams;
   const h=a.hardwareNeeds;
@@ -226,7 +232,8 @@ export function evaluatePackage(a:QuoteAnswers,p:PackageDef,promotionId:Promotio
     if(appliedPromotion==='rateLock24')notes.push('Rate-lock request is NOT approved by this estimate. ProTracer must confirm the final year-two subscription rate.');
     if(appliedPromotion==='storage250'||appliedPromotion==='delivery50')notes.push('Promotional cloud capacity is limited to the first 12 months and does not extend video retention.');
   }
-  if(p.id==='byod')notes.push('BYOD is conditional: ProTracer engineering must certify each customer-owned processing computer. The refurbished iPad is included but cannot replace the processing computer.');
+  if(p.id==='byod')notes.push('Processing-computer BYOD requires ProTracer engineering certification. A school-owned iPad cannot replace a required processing computer.');
+  if(a.useOwnIpad)notes.push('iPad BYOD credit requires ProTracer verification of each customer-provided compatible iPad. No ProTracer iPad is included for those licensed teams; an iPad remains required for the supported workflow.');
   const estimatedUsageAnnual=moneyRound(12*(excessStorage*USAGE.storageGbMonth+excessDelivery*USAGE.deliveredGb));
   if(estimatedUsageAnnual>0)notes.push('Estimated cloud overage is illustrative, not due at signing and subject to actual metered use.');
   const hardwareSubtotal=moneyRound(lines.filter(l=>l.category==='hardware').reduce((s,l)=>s+l.amount,0));
@@ -249,7 +256,7 @@ export function evaluatePackage(a:QuoteAnswers,p:PackageDef,promotionId:Promotio
   if(!dept&&teams>1)notes.push('Independent team subscriptions have separate cloud allowances; storage is not pooled between teams.');
   notes.push('For this illustration, the one-time package equipment/setup charge is treated as tangible equipment; any separable labor must be reviewed before a final quote.');
   notes.push('Tax shown is STATE-ONLY, based on July 2026 published rates, and excludes local taxes, exemptions, special jurisdictions, seller nexus and freight taxability. This is not a final tax quote.');
-  return {package:p,eligible:reasons.length===0,reasons,lines,hardwareSubtotal,oneTimeServices,annualService,monthlyBaseService,annualExtras,estimatedUsageAnnual,taxableBase,taxAmount,taxReady,taxReason,dueBeforeTax,dueNow,firstYearBeforeTax,firstYearTotal,includedStorageGb,includedDeliveryGb,includedCameras,includedRetentionMonths:p.retentionMonths,notes,appliedPromotion,serviceYears:a.serviceYears};
+  return {package:p,eligible:reasons.length===0,reasons,lines,hardwareSubtotal,oneTimeServices,annualService,monthlyBaseService,annualExtras,estimatedUsageAnnual,taxableBase,taxAmount,taxReady,taxReason,dueBeforeTax,dueNow,firstYearBeforeTax,firstYearTotal,includedStorageGb,includedDeliveryGb,includedCameras,includedIpads,includedRetentionMonths:p.retentionMonths,notes,appliedPromotion,serviceYears:a.serviceYears};
 }
 
 
