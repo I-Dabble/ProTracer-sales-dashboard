@@ -10,10 +10,11 @@ import {
 import { ADDONS, CATALOG_DATE, DEPT_EXTRA, PACKAGES, type PackageId, type ProductId } from '@/lib/catalog';
 import {
   DEFAULT_ANSWERS, DEFAULT_HARDWARE_NEEDS, estimateIndividualComponents,
-  getRecommendations, price, type HardwareNeeds, type QuoteAnswers,
+  getRecommendations, evaluatePackage, price, type HardwareNeeds, type QuoteAnswers,
   type QuoteEvaluation,
 } from '@/lib/quote';
 import { STATES } from '@/lib/states';
+import { getPromotionAvailability, promotionById, PROMOTIONS, type PromotionId } from '@/lib/promotions';
 import { getStateRate, stateHardwareTax, STATE_RATE_SOURCE, STATE_RATE_SOURCE_URL } from '@/lib/tax';
 
 const INITIAL:QuoteAnswers={...DEFAULT_ANSWERS,hardwareNeeds:{...DEFAULT_HARDWARE_NEEDS}};
@@ -21,10 +22,10 @@ const EQUIPMENT: Array<{key:keyof HardwareNeeds;title:string;hint:string;icon:Lu
   {key:'cameras',title:'360° cameras',hint:'Capture your action from every angle',icon:Camera},
   {key:'mounts',title:'Camera mounts',hint:'One comes with each package camera',icon:Target},
   {key:'sdCards',title:'Recording cards',hint:'One microSD comes with each camera',icon:MemoryStick},
-  {key:'laptops',title:'Processing laptops',hint:'Configured and ready for capture',icon:Laptop},
+  {key:'laptops',title:'Processing laptops',hint:'Included in complete plans; 0 for approved BYOD',icon:Laptop},
   {key:'tripods',title:'Camera tripods',hint:'Portable setup at your venue',icon:Layers},
   {key:'cases',title:'Pelican cases',hint:'Protective equipment transport',icon:Package},
-  {key:'ipads',title:'Refurbished iPads',hint:'Additional configured mobile access',icon:Monitor},
+  {key:'ipads',title:'Refurbished iPads',hint:'One included per team unless you supply your own',icon:Monitor},
   {key:'backup',title:'6 TB backup drives',hint:'Optional local video backup',icon:HardDrive},
 ];
 const count=(v:number,min=0,max=100)=>Number.isFinite(v)?Math.min(max,Math.max(min,Math.floor(v))):min;
@@ -51,6 +52,9 @@ function valueBonuses(q:QuoteEvaluation,a:QuoteAnswers){
   const includedCameras=p.camerasPerTeam*kitCount;
   const includedCases=p.casePerTeam*kitCount;
   const list:string[]=[];
+  if(a.useOwnIpad)list.push(`${kitCount} school-owned iPad${kitCount===1?'':'s'} — $500 equipment credit per team`);
+  else list.push(`${kitCount} configured refurbished iPad${kitCount===1?'':'s'} included with the package`);
+  if(p.id==='byod')list.push('School-supplied processing computer subject to engineering approval');
   if(includedCameras>h.cameras)list.push(`${includedCameras-h.cameras} additional 360° camera${includedCameras-h.cameras===1?'':'s'} with mounts and cards`);
   if(includedCases>h.cases)list.push(`${includedCases-h.cases} Pelican protective case${includedCases-h.cases===1?'':'s'}`);
   if(q.includedStorageGb>a.storageGb)list.push(`${fmt(q.includedStorageGb-a.storageGb)} GB more cloud storage than requested`);
@@ -66,7 +70,8 @@ function valueBonuses(q:QuoteEvaluation,a:QuoteAnswers){
 }
 function pitch(q:QuoteEvaluation,a:QuoteAnswers){
   const name=q.package.id;
-  if(name==='basic')return 'All the essentials for a strong start: a complete camera, mount, recording card and processing setup with ProTracer software, video storage and standard support.';
+  if(name==='basic')return 'A complete camera, mount, recording card, processing laptop and refurbished iPad with ProTracer software, cloud storage and standard support.';
+  if(name==='byod')return 'Save on the processing laptop by using an approved school computer. Your camera, mount, recording card, ProTracer software and cloud service remain included. iPad options are available separately.';
   if(name==='plus')return 'Cover more of the action: Team Plus includes two complete camera-and-mount setups and a Pelican case, while keeping the same recurring service price as Basic.';
   if(name==='premium')return 'Step up to larger cloud capacity, extended retention, priority service, premium protection and annual training—alongside your two complete camera systems.';
   return `Equip ${Math.max(5,a.teams)} named teams under one department account with individual camera kits, pooled video storage and centralized oversight.`;
@@ -81,6 +86,7 @@ function baseYear(q:QuoteEvaluation,a:QuoteAnswers){
 export default function SalesApp(){
   const [answers,setAnswers]=useState<QuoteAnswers>(INITIAL);
   const [selected,setSelected]=useState<PackageId|null>(null);
+  const [selectedPromotion,setSelectedPromotion]=useState<PromotionId>('none');
   const [extrasOpen,setExtrasOpen]=useState(false);
   const [compareOpen,setCompareOpen]=useState(false);
   const [breakdownOpen,setBreakdownOpen]=useState(false);
@@ -92,7 +98,11 @@ export default function SalesApp(){
   const independent=useMemo(()=>estimateIndividualComponents(answers),[answers]);
   const preferred=recom.recommended;
   const manuallySelected=recom.comparisons.find(p=>p.package.id===selected&&p.eligible);
-  const configured=manuallySelected??preferred;
+  const selectedBase=manuallySelected??preferred;
+  const promoEligibility=selectedBase?getPromotionAvailability(selectedPromotion,selectedBase.package.id,answers.billing,answers.serviceYears):null;
+  const appliedPromotion=promoEligibility?.available?selectedPromotion:'none';
+  const configured=selectedBase?evaluatePackage(answers,selectedBase.package,appliedPromotion):null;
+  const chosenPromotion=configured?promotionById(configured.appliedPromotion):undefined;
   const stateRate=getStateRate(answers.shippingState);
   const independentStateTax=stateHardwareTax(independent.taxableBase,answers.shippingState);
   const pickedExtras=ADDONS.filter(x=>(answers.addonQuantities[x.id]??0)>0);
@@ -100,21 +110,27 @@ export default function SalesApp(){
   const extraEstimate=pickedExtras.reduce((n,x)=>n+x.price*(answers.addonQuantities[x.id]??0),0);
   const firstYear=configured?(configured.firstYearTotal??configured.firstYearBeforeTax):null;
   const selectionDiffers=preferred&&configured&&preferred.package.id!==configured.package.id;
+  useEffect(()=>{
+    if(selectedPromotion!=='none'&&!promoEligibility?.available)setSelectedPromotion('none');
+  },[selectedPromotion,promoEligibility?.available]);
 
   function update<K extends keyof QuoteAnswers>(field:K,value:QuoteAnswers[K],clearSelection=true){
-    setAnswers(prev=>({...prev,[field]:value}));if(clearSelection)setSelected(null);
+    setAnswers(prev=>({...prev,[field]:value}));
+    // Preserve an explicitly chosen package when changing quantities or cloud needs.
+    if(field==='billing'||field==='serviceYears')setSelectedPromotion('none');
   }
-  function reset(){setAnswers({...INITIAL,hardwareNeeds:{...DEFAULT_HARDWARE_NEEDS},addonQuantities:{}});setSelected(null);setZipStatus('empty');setZipCity('');setCopied(false);}
+  function reset(){setAnswers({...INITIAL,hardwareNeeds:{...DEFAULT_HARDWARE_NEEDS},addonQuantities:{}});setSelected(null);setSelectedPromotion('none');setZipStatus('empty');setZipCity('');setCopied(false);}
   function changeTeamCount(n:number){
     setAnswers(a=>{
       const prev=a.hardwareNeeds??DEFAULT_HARDWARE_NEEDS;
       const updated={...prev};
-      for(const key of ['cameras','mounts','sdCards','laptops','tripods'] as const){
+      for(const key of ['cameras','mounts','sdCards','laptops','tripods','ipads'] as const){
         const prior=prev[key];
-        updated[key]=count(prior===a.teams*2?n*2:prior===a.teams?n:prior+(n-a.teams));
+        updated[key]=(key==='laptops'&&prior===0)||(key==='ipads'&&a.useOwnIpad)?0:
+          count(prior===a.teams*2?n*2:prior===a.teams?n:prior+(n-a.teams));
       }
       return {...a,teams:n,hardwareNeeds:updated};
-    });setSelected(null);
+    });
   }
   function changeHardware(key:keyof HardwareNeeds,n:number){
     setAnswers(a=>{
@@ -126,10 +142,24 @@ export default function SalesApp(){
         updated.sdCards=count(prev.sdCards+delta);
       }
       return {...a,hardwareNeeds:updated};
-    });setSelected(null);
+    });
   }
   function changeAddon(id:ProductId,value:number){
-    setAnswers(a=>({...a,addonQuantities:{...a.addonQuantities,[id]:value}}));setSelected(null);
+    setAnswers(a=>({...a,addonQuantities:{...a.addonQuantities,[id]:value}}));
+  }
+  function choosePackage(id:PackageId){
+    setAnswers(a=>{
+      const prev=a.hardwareNeeds??DEFAULT_HARDWARE_NEEDS;
+      return {...a,hardwareNeeds:{...prev,laptops:id==='byod'?0:Math.max(prev.laptops,a.teams),ipads:a.useOwnIpad?0:Math.max(prev.ipads,a.teams)}};
+    });
+    setSelected(id);setSelectedPromotion('none');
+  }
+  function chooseOwnIpad(own:boolean){
+    setAnswers(a=>{
+      const prev=a.hardwareNeeds??DEFAULT_HARDWARE_NEEDS;
+      return {...a,useOwnIpad:own,hardwareNeeds:{...prev,ipads:own?0:Math.max(1,a.teams)}};
+    });
+    setSelectedPromotion('none');
   }
   function setState(state:string){
     setAnswers(a=>({...a,shippingState:state,shippingZip:''}));
@@ -163,9 +193,15 @@ export default function SalesApp(){
     const lines=[
       'PROTRACER | PERSONALIZED PACKAGE ESTIMATE',
       `Program: ${answers.teams} named team(s)`,
-      `Requested: ${h.cameras} cameras, ${h.mounts} mounts, ${h.sdCards} microSD cards, ${h.laptops} laptops, ${h.tripods} tripods, ${h.cases} Pelican cases`,
+      `Service commitment: ${answers.serviceYears} year(s); year two billed separately unless contracted otherwise`,
+      ...(answers.serviceYears===2&&configured?[`Indicative second-year recurring service before usage/tax: ${price(answers.billing==='annual'?configured.annualService:configured.monthlyBaseService*12+configured.annualExtras)}. Not an advance payment or guaranteed renewal price.`]:[]),
+      `Requested: ${h.cameras} cameras, ${h.mounts} mounts, ${h.sdCards} microSD cards, ${h.laptops} processing laptops, ${h.ipads} ProTracer-supplied iPads, ${h.tripods} tripods, ${h.cases} Pelican cases`,
       `Recommended: ${preferred?.package.title??'Custom review required'}`,
       `Configured selection: ${headline}`,
+      `Customer-owned iPad option: ${answers.useOwnIpad?'Yes, $500 credit per team; each device must pass ProTracer certification':'No, ProTracer supplies included iPads'}`,
+      `Promotional benefit: ${chosenPromotion?chosenPromotion.title:'None'}`,
+      ...(configured?.package.id==='byod'?['Processing-computer BYOD REQUIRES engineering approval before any binding sale.']:[]),
+      ...(chosenPromotion?.requiresTeamReview?['Rate lock REQUEST only; ProTracer team approval required.']:[]),
       `Individually priced catalog reference (first year): ${price(independent.firstYear)} before tax; not an independent product offering`,
       `Recommended base package: ${preferred?price(baseYear(preferred,answers)):'Contact ProTracer'}`,
       `Configured first-year price before tax: ${quote?price(quote.firstYearBeforeTax):'Custom quote needed'}`,
@@ -176,6 +212,7 @@ export default function SalesApp(){
       `Billing: ${answers.billing==='annual'?'Annual service prepaid':'Monthly service payments; hardware upfront'}`,
       '',
       'Included highlights:',...(quote?valueBonuses(quote,answers).map(v=>'• '+v):[]),
+      ...(quote?quote.lines.filter(l=>l.name.startsWith('Promotion:')).map(l=>'• '+l.name):[]),
       '',
       'Estimate only. Local/district taxes, freight, exemptions and site-specific charges not included. One-time equipment/setup is treated as tangible hardware for this estimate; actual tax treatment must be confirmed. Prices subject to written quote. https://www.protracerofficial.com',
     ];
@@ -197,7 +234,7 @@ export default function SalesApp(){
     </div></section>
 
     <div className="container layout" id="build"><div className="builder">
-      <div className="step-navigation"><div><span className="step-tag">01 · PROGRAM</span><span className="step-tag">02 · EQUIPMENT</span><span className="step-tag">03 · SERVICE</span><span className="step-tag">04 · RESULTS</span></div><button onClick={reset} className="text-button" type="button"><RotateCcw size={14}/> Reset all</button></div>
+      <div className="step-navigation"><div><span className="step-tag">01 · PROGRAM</span><span className="step-tag">02 · EQUIPMENT</span><span className="step-tag">03 · SERVICE</span><span className="step-tag">04 · RESULTS</span><span className="step-tag">05 · PROMOTIONS</span></div><button onClick={reset} className="text-button" type="button"><RotateCcw size={14}/> Reset all</button></div>
 
       <section className="card" aria-labelledby="program-heading"><div className="section-title"><span className="number">01</span><div><span className="kicker">LET'S START HERE</span><h2 id="program-heading">Who are we building for?</h2><p>One team or an entire athletic department—your choices update the price instantly.</p></div></div>
         <Radio label="Organization type" items={[{value:'school',name:'School / College'},{value:'club',name:'Club / Academy'},{value:'organization',name:'Athletic department'},{value:'other',name:'Other'}]} value={answers.buyerType} onChange={v=>update('buyerType',v)}/>
@@ -206,11 +243,18 @@ export default function SalesApp(){
         {answers.teams>10&&<p className="warning"><Info size={16}/> More than 10 named teams requires custom department pricing.</p>}
       </section>
 
-      <section className="card" aria-labelledby="equipment-heading"><div className="section-title"><span className="number">02</span><div><span className="kicker">SELECT EXACT QUANTITIES</span><h2 id="equipment-heading">What equipment do you need?</h2><p>Enter the <strong>total needed</strong>, not extra items on top of a package.</p></div></div>
+      <section className="card" aria-labelledby="equipment-heading"><div className="section-title"><span className="number">02</span><div><span className="kicker">SELECT EXACT QUANTITIES</span><h2 id="equipment-heading">What equipment do you need?</h2><p>Enter the <strong>total needed</strong>, not extra items on top of a package. Each complete kit includes a processing laptop and iPad; compatible customer-owned alternatives are available.</p></div></div>
         <div className="rule"><BadgeCheck size={23}/><span><strong>One camera = one included mount + recording card</strong><small>Every package includes a sport mount and microSD card per camera. We credit these automatically so you never pay twice.</small></span></div>
-        <div className="quick-set"><span>Quick start</span><button type="button" onClick={()=>{setAnswers(a=>({...a,hardwareNeeds:{...(a.hardwareNeeds??DEFAULT_HARDWARE_NEEDS),cameras:a.teams,mounts:a.teams,sdCards:a.teams,laptops:a.teams,tripods:a.teams}}));setSelected(null);}}>1 camera / team</button><button type="button" onClick={()=>{setAnswers(a=>({...a,hardwareNeeds:{...(a.hardwareNeeds??DEFAULT_HARDWARE_NEEDS),cameras:a.teams*2,mounts:a.teams*2,sdCards:a.teams*2,laptops:a.teams,tripods:a.teams}}));setSelected(null);}}>2 cameras / team</button></div>
+        <div className="quick-set"><span>Quick start</span><button type="button" onClick={()=>{setAnswers(a=>({...a,hardwareNeeds:{...(a.hardwareNeeds??DEFAULT_HARDWARE_NEEDS),cameras:a.teams,mounts:a.teams,sdCards:a.teams,laptops:a.teams,tripods:a.teams,ipads:a.useOwnIpad?0:Math.max((a.hardwareNeeds??DEFAULT_HARDWARE_NEEDS).ipads,a.teams)}}));}}>1 camera / team</button><button type="button" onClick={()=>{setAnswers(a=>({...a,hardwareNeeds:{...(a.hardwareNeeds??DEFAULT_HARDWARE_NEEDS),cameras:a.teams*2,mounts:a.teams*2,sdCards:a.teams*2,laptops:a.teams,tripods:a.teams,ipads:a.useOwnIpad?0:Math.max((a.hardwareNeeds??DEFAULT_HARDWARE_NEEDS).ipads,a.teams)}}));}}>2 cameras / team</button></div>
         <div className="equipment-grid">{EQUIPMENT.map(e=>{const Icon=e.icon;return <div className="equipment-row" key={e.key}><div className="equipment-icon"><Icon size={20}/></div><div className="equipment-copy"><strong>{e.title}</strong><small>{e.hint}</small></div><Quantity label={e.title} min={e.key==='cameras'?1:0} max={100} value={h[e.key]} onChange={v=>changeHardware(e.key,v)}/></div>;})}</div>
-        <p className="helper"><Info size={15}/> Camera changes adjust mount and card quantities automatically; you can edit either independently.</p>
+        <p className="helper"><Info size={15}/> Every package includes one iPad per licensed team unless you choose customer-supplied iPads below. A processing computer is still required; for Basic BYOD, ProTracer must approve the school's computer.</p>
+        <div className="byod-panel">
+          <div className="byod-panel-head"><Monitor size={21}/><div><strong>Bring your own compatible devices</strong><small>Choose either option or both. These are equipment choices, so they do not consume your one promotional benefit. ProTracer must verify the devices.</small></div></div>
+          <label className="byod-toggle"><input type="checkbox" checked={selectedBase?.package.id==='byod'} disabled={selectedBase?.package.id!=='basic'&&selectedBase?.package.id!=='byod'} onChange={e=>choosePackage(e.target.checked?'byod':'basic')}/><span><strong>Use our own processing computer — save $1,400 per Basic team</strong><small>Basic Team only. An approved computer is still required; the iPad cannot replace it.</small></span></label>
+          {selectedBase?.package.id==='byod'&&<p className="byod-savings"><CheckCircle2 size={17}/> Processing-computer BYOD selected. Savings of <strong>{price(1400*answers.teams)}</strong> are reflected in the Basic package price.</p>}
+          <label className="byod-toggle"><input type="checkbox" checked={answers.useOwnIpad} onChange={e=>chooseOwnIpad(e.target.checked)}/><span><strong>We will supply our own compatible iPad(s)</strong><small>Requires ProTracer compatibility verification before order approval. All licensed teams must have a compatible iPad.</small></span></label>
+          {answers.useOwnIpad&&<p className="byod-savings"><CheckCircle2 size={17}/> A <strong>{price(500*(selectedBase?.package.id==='department'?Math.max(5,answers.teams):answers.teams))}</strong> iPad BYOD credit is included in the configured package estimate.</p>}
+        </div>
       </section>
 
       <section className="card" aria-labelledby="service-heading"><div className="section-title"><span className="number">03</span><div><span className="kicker">MAKE IT YOURS</span><h2 id="service-heading">Cloud, support and billing</h2><p>Choose the capabilities that matter to your program.</p></div></div>
@@ -220,7 +264,8 @@ export default function SalesApp(){
           <label>Requested training hours<div className="qty-wrapper"><Quantity label="Training hours" value={answers.trainingHours} max={100} onChange={v=>update('trainingHours',v)}/></div></label>
         </div>
         <div className="feature-toggles"><label><input type="checkbox" checked={answers.priority} onChange={e=>update('priority',e.target.checked)}/><span><strong>Priority technical support</strong><small>Premium + Department include this.</small></span></label><label><input type="checkbox" checked={answers.protection} onChange={e=>update('protection',e.target.checked)}/><span><strong>Premium equipment protection</strong><small>Included in Premium + Department.</small></span></label><label><input type="checkbox" checked={!answers.acceptOverages} onChange={e=>update('acceptOverages',!e.target.checked)}/><span><strong>Only show options within my cloud limits</strong><small>Request custom terms if your usage exceeds a package.</small></span></label></div>
-        <div className="billing-section"><span className="form-label">How would you prefer to pay for software service?</span><Radio label="Billing frequency" items={[{value:'annual',name:'Annual prepay',hint:'Discounted service + hardware upfront'},{value:'monthly',name:'Monthly service',hint:'Hardware upfront + 12 monthly payments'}]} value={answers.billing} onChange={v=>update('billing',v,false)}/></div>
+        <div className="billing-section"><span className="form-label">How would you prefer to pay for software service?</span><Radio label="Billing frequency" items={[{value:'annual',name:'Annual prepay',hint:'Prepaid each service year + hardware upfront'},{value:'monthly',name:'Monthly service',hint:'Hardware upfront + 12 monthly service payments'}]} value={answers.billing} onChange={v=>update('billing',v,false)}/></div>
+        <div className="billing-section"><span className="form-label">How long can your program commit to service?</span><Radio label="Service commitment" items={[{value:'1',name:'1 year',hint:'Standard initial commitment'},{value:'2',name:'2 years',hint:'Qualifies for certain promotions; year 2 billed separately'}]} value={String(answers.serviceYears)} onChange={v=>update('serviceYears',Number(v) as 1|2,false)}/></div>
       </section>
 
       <section className="card extras-card" aria-labelledby="extras-heading"><div className="section-title"><span className="number">+</span><div><span className="kicker">OPTIONAL, NEVER REQUIRED</span><h2 id="extras-heading">Need anything extra?</h2><p>These are <strong>additional items beyond the quantities above</strong>.</p></div></div>
@@ -239,12 +284,14 @@ export default function SalesApp(){
       </section>
 
       <section className="card packages-card" id="packages" aria-labelledby="packages-heading"><div className="section-title"><span className="number">04</span><div><span className="kicker">YOUR OPTIONS, SIDE BY SIDE</span><h2 id="packages-heading">Compare complete packages</h2><p>Each estimate adds only what's missing from your requested quantities.</p></div></div>
-        <div className="package-options">{recom.comparisons.map(q=>{const isPicked=configured?.package.id===q.package.id;const isBest=preferred?.package.id===q.package.id;const total=q.firstYearTotal??q.firstYearBeforeTax;const kits=q.package.id==='department'?Math.max(5,answers.teams):answers.teams*q.package.camerasPerTeam;return <button type="button" key={q.package.id} className={`package-option ${isPicked?'picked':''} ${!q.eligible?'not-eligible':''}`} disabled={!q.eligible} onClick={()=>setSelected(q.package.id)}><span className="package-option-icon">{isPicked?<Check size={16}/>:<Package size={17}/>}</span><span className="package-option-main"><span className="package-name">{q.package.title}{isBest&&<span className="tag">BEST FIT</span>}</span><span className="package-specs">{kits} camera{kits===1?'':'s'} + {kits} mounts · {fmt(q.includedStorageGb)} GB cloud</span>{!q.eligible&&<span className="package-error">Custom scope review required</span>}</span><span className="package-price"><strong>{q.eligible?price(total):'Custom'}</strong><small>{stateRate===null?'before tax':'incl. state-only tax'}</small></span></button>;})}</div>
+        <div className="package-options">{recom.comparisons.map(q=>{const isPicked=configured?.package.id===q.package.id;const isBest=preferred?.package.id===q.package.id;const total=q.firstYearTotal??q.firstYearBeforeTax;const kits=q.package.id==='department'?Math.max(5,answers.teams):answers.teams*q.package.camerasPerTeam;return <button type="button" key={q.package.id} className={`package-option ${isPicked?'picked':''} ${!q.eligible?'not-eligible':''}`} disabled={!q.eligible} onClick={()=>choosePackage(q.package.id)}><span className="package-option-icon">{isPicked?<Check size={16}/>:<Package size={17}/>}</span><span className="package-option-main"><span className="package-name">{q.package.title}{isBest&&<span className="tag">BEST FIT</span>}</span><span className="package-specs">{kits} camera{kits===1?'':'s'} + {kits} mounts · {answers.useOwnIpad?'school-supplied iPads':`${q.includedIpads} included iPad${q.includedIpads===1?'':'s'}`} · {fmt(q.includedStorageGb)} GB cloud{q.package.id==='byod'?' · own computer approval required':''}</span>{!q.eligible&&<span className="package-error">Custom scope review required</span>}</span><span className="package-price"><strong>{q.eligible?price(total):'Custom'}</strong><small>{stateRate===null?'before tax':'incl. state-only tax'}</small></span></button>;})}</div>
         <button className="expand-button" type="button" aria-expanded={compareOpen} onClick={()=>setCompareOpen(!compareOpen)}>Compare all included features <ChevronDown size={17} className={compareOpen?'up':''}/></button>
         {compareOpen&&<div className="comparison-table-wrap"><table className="comparison-table"><thead><tr><th>Included</th>{PACKAGES.map(p=><th key={p.id}>{p.title}</th>)}</tr></thead><tbody>{[
           ['Cameras / mounts',...PACKAGES.map(p=>String((p.id==='department'?Math.max(5,answers.teams):answers.teams*p.camerasPerTeam))+' / '+String(p.id==='department'?Math.max(5,answers.teams):answers.teams*p.mountPerTeam))],
           ['Recording cards',...PACKAGES.map(p=>String(p.id==='department'?Math.max(5,answers.teams):answers.teams*p.camerasPerTeam))],
           ['Pelican cases',...PACKAGES.map(p=>String(p.id==='department'?0:answers.teams*p.casePerTeam))],
+          ['Processing laptops supplied by ProTracer',...PACKAGES.map(p=>String(p.id==='department'?Math.max(5,answers.teams):answers.teams*p.laptopPerTeam))],
+          ['Refurbished iPads supplied by ProTracer',...recom.comparisons.map(q=>String(q.includedIpads))],
           ['Storage',...recom.comparisons.map(q=>fmt(q.includedStorageGb)+' GB')],
           ['Video viewing/downloads',...recom.comparisons.map(q=>fmt(q.includedDeliveryGb)+' GB/mo')],
           ['Retention',...PACKAGES.map(p=>p.retentionMonths+' months')],
@@ -253,6 +300,29 @@ export default function SalesApp(){
           ['Annual training',...PACKAGES.map(p=>p.trainingHoursPerTeam?`${p.trainingHoursPerTeam} hr / team`:'Optional')],
         ].map((row,i)=><tr key={i}>{row.map((cell,j)=>j===0?<th scope="row" key={j}>{cell}</th>:<td key={j}>{cell}</td>)}</tr>)}</tbody></table></div>}
       </section>
+
+      <section className="card promo-card" id="promotions" aria-labelledby="promotions-heading">
+        <div className="section-title"><span className="number">05</span><div><span className="kicker">ONE PROMOTION PER QUOTE</span><h2 id="promotions-heading">Choose a promotional benefit</h2><p>Select up to one offer for <strong>{selectedBase?.package.title??'your package'}</strong>. Offers that don't match your package, service commitment, or payment method are visible but disabled.</p></div></div>
+        <div className="promo-grid" role="radiogroup" aria-label="Select one promotional benefit">
+          <button type="button" role="radio" aria-checked={selectedPromotion==='none'} className={`promo-tile ${selectedPromotion==='none'?'selected':''}`} onClick={()=>setSelectedPromotion('none')}>
+            <span className="promo-head"><span className="promo-dot">{selectedPromotion==='none'&&<Check size={14}/>}</span><strong>Standard package</strong><span className="promo-status">No promotion</span></span>
+            <small>Keep the published package and its included benefits; any compatible BYOD credit still applies.</small>
+          </button>
+          {PROMOTIONS.map(p=>{
+            const check=selectedBase?getPromotionAvailability(p.id,selectedBase.package.id,answers.billing,answers.serviceYears):{available:false,reason:'Select a package first.'};
+            const active=check.available&&selectedPromotion===p.id;
+            return <button type="button" key={p.id} role="radio" aria-checked={active} disabled={!check.available} title={check.available?p.qualification:check.reason}
+              className={`promo-tile ${active?'selected':''} ${!check.available?'disabled':''}`}
+              onClick={()=>{if(check.available)setSelectedPromotion(p.id);}}>
+              <span className="promo-head"><span className="promo-dot">{active&&<Check size={14}/>}</span><strong>{p.title}</strong><span className={`promo-status ${check.available?(p.requiresTeamReview?'review':'valid'):'locked'}`}>{check.available?(p.requiresTeamReview?'Consult team':'Cleared'):'Unavailable'}</span></span>
+              <small>{p.description}</small>
+              <span className="promo-terms">{check.available?p.qualification:check.reason}</span>
+            </button>;
+          })}
+        </div>
+        {(selectedBase?.package.id==='byod'||answers.useOwnIpad)&&<p className="promo-approval"><Info size={15}/> BYOD is independent of the one-promotion limit. School-supplied {selectedBase?.package.id==='byod'?'processing computers':''}{selectedBase?.package.id==='byod'&&answers.useOwnIpad?' and ':''}{answers.useOwnIpad?'iPads':''} must pass compatibility checks before a binding sale.</p>}
+        {chosenPromotion&&<p className="promo-approval"><CheckCircle2 size={16}/> Selected: <strong>{chosenPromotion.title}</strong>. {chosenPromotion.requiresTeamReview?'This is a request for team review; no rate protection is guaranteed.':'Subject to written ProTracer approval.'} Only one promotional benefit is included.</p>}
+      </section>
     </div>
 
     <aside className="quote-column" aria-label="Live quote estimate"><div className="quote-box">
@@ -260,6 +330,8 @@ export default function SalesApp(){
       <div className="recommendation"><div className="recommend-chip"><Sparkles size={16}/> OUR RECOMMENDATION</div><h2>{preferred?.package.title??'Custom package'}</h2><p>{preferred?pitch(preferred,answers):'Your requirements need a custom conversation with ProTracer.'}</p></div>
       {configured&&<div className="bonus"><h3><BadgeCheck size={17}/> More value you receive</h3><ul>{valueBonuses(configured,answers).map(s=><li key={s}><CheckCircle2 size={16}/>{s}</li>)}</ul></div>}
       {selectionDiffers&&<div className="selection-banner">Viewing your selection: <strong>{configured?.package.title}</strong> · Recommended: <strong>{preferred?.package.title}</strong></div>}
+      {chosenPromotion&&<div className="promo-quote"><CheckCircle2 size={16}/><span><strong>Selected promotion:</strong> {chosenPromotion.title}{chosenPromotion.requiresTeamReview?' (pending team approval)':''}</span></div>}
+      {(answers.useOwnIpad||configured?.package.id==='byod')&&<div className="promo-quote"><Info size={16}/><span><strong>BYOD verification required:</strong> school-owned processing computer and/or iPad must meet ProTracer's compatibility requirements.</span></div>}
       <div className="compare-prices">
         <div className="compare-price"><span>INDIVIDUAL CATALOG ITEMS</span><strong>{price(independent.firstYear+(independentStateTax??0))}</strong><small>Hardware + Basic software reference · {stateRate===null?'before tax':'incl. state-only tax'} · not sold as a standalone bundle</small></div>
         <div className="compare-price"><span>RECOMMENDED COMPLETE PACKAGE</span><strong>{preferred?price(baseYear(preferred,answers)):'Custom'}</strong><small>Published package base, before extras or tax</small></div>
@@ -268,9 +340,10 @@ export default function SalesApp(){
       {configured&&<><div className="quote-breakdown"><PriceRow label="Hardware + selected upgrades" value={price(configured.hardwareSubtotal)}/><PriceRow label="One-time professional services" value={price(configured.oneTimeServices)}/><PriceRow label={answers.billing==='annual'?'Annual service (prepaid)':'Monthly base service'} value={price(answers.billing==='annual'?configured.annualService:configured.monthlyBaseService)}/>{answers.billing==='monthly'&&configured.annualExtras>0&&<PriceRow label="Additional annual services" value={price(configured.annualExtras)}/>}<PriceRow label="State-only hardware tax estimate" value={configured.taxAmount===null?'Choose state':price(configured.taxAmount)} soft/></div>
         <div className="due-box"><span>ESTIMATED DUE UPFRONT</span><strong>{price(configured.dueNow??configured.dueBeforeTax)}</strong><small>{configured.taxAmount===null?'Before sales tax.':'Includes estimated state-only hardware tax.'} {answers.billing==='monthly'?'Hardware and first service month.':'Hardware and prepaid annual service.'}</small></div>
         <div className="billing-foot"><CreditCard size={16}/><span>{answers.billing==='annual'?'Annual payment saves on recurring service.':'Twelve monthly service installments; hardware is NOT financed.'}</span></div>
+        {answers.serviceYears===2&&<div className="billing-foot"><Info size={16}/><span>24-month service commitment. Year-two service is additional, estimated at <strong>{price(answers.billing==='annual'?configured.annualService:configured.monthlyBaseService*12+configured.annualExtras)}</strong> before any usage, taxes or approved rate changes; not included in this first-year total.</span></div>}
         {configured.estimatedUsageAnnual>0&&<p className="overage-message"><Info size={15}/> {price(configured.estimatedUsageAnnual)} of annual usage overages are estimated in the first-year number, but only charged if actually incurred.</p>}
         <button type="button" className="expand-button lines-link" aria-expanded={breakdownOpen} onClick={()=>setBreakdownOpen(!breakdownOpen)}>See every line item <ChevronDown className={breakdownOpen?'up':''} size={17}/></button>
-        {breakdownOpen&&<div className="quote-lines">{configured.lines.filter(x=>x.amount>0).map((l,i)=><div key={`${l.name}-${i}`}><span>{l.name}<small>{l.quantity} × {price(l.unitPrice)} · {l.period==='year'?'yearly':'one-time'}</small></span><strong>{price(l.amount)}</strong></div>)}{configured.estimatedUsageAnnual>0&&<div><span>Usage overages (estimate)<small>Only billed for actual use</small></span><strong>{price(configured.estimatedUsageAnnual)}</strong></div>}</div>}
+        {breakdownOpen&&<div className="quote-lines">{configured.lines.filter(x=>x.amount!==0||x.name.startsWith('Promotion:')).map((l,i)=><div key={`${l.name}-${i}`}><span>{l.name}<small>{l.quantity} × {price(l.unitPrice)} · {l.period==='year'?'yearly':'one-time'}</small></span><strong>{price(l.amount)}</strong></div>)}{configured.estimatedUsageAnnual>0&&<div><span>Usage overages (estimate)<small>Only billed for actual use</small></span><strong>{price(configured.estimatedUsageAnnual)}</strong></div>}</div>}
       </>}
       <div className="quote-actions"><button className="button button-light" type="button" onClick={()=>window.print()}><Printer size={18}/> Print</button><button className="button button-blue" type="button" onClick={copySummary}><ClipboardCopy size={17}/>{copied?'Copied!':'Copy summary'}</button></div>
       <a className="contact-link" href="https://www.protracerofficial.com/" target="_blank" rel="noopener noreferrer">Explore ProTracer <ArrowRight size={17}/></a>
