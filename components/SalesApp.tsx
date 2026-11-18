@@ -110,6 +110,9 @@ export default function SalesApp(){
   const extraEstimate=pickedExtras.reduce((n,x)=>n+x.price*(answers.addonQuantities[x.id]??0),0);
   const firstYear=configured?(configured.firstYearTotal??configured.firstYearBeforeTax):null;
   const selectionDiffers=preferred&&configured&&preferred.package.id!==configured.package.id;
+  useEffect(()=>{
+    if(selectedPromotion!=='none'&&!promoEligibility?.available)setSelectedPromotion('none');
+  },[selectedPromotion,promoEligibility?.available]);
 
   function update<K extends keyof QuoteAnswers>(field:K,value:QuoteAnswers[K],clearSelection=true){
     setAnswers(prev=>({...prev,[field]:value}));
