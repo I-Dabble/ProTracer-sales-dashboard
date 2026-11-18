@@ -329,11 +329,11 @@ export function getRecommendations(a:QuoteAnswers){
   let recommended=sorted[0]||null;
   // Team Plus includes a Pelican case and the second complete camera/mount system.
   // For two-camera-per-team requirements, recommend the complete Plus kit when
-  // its premium is no more than $200 per team over a lower-priced add-on build.
+  // its premium is no more than $500 per team over a lower-priced add-on build.
   const neededCameras=a.hardwareNeeds?.cameras??a.camerasPerTeam*a.teams;
   const plus=eligible.find(x=>x.package.id==='plus');
   if(plus && recommended?.package.id==='basic' && neededCameras>=a.teams*2 &&
-     neededCameras<=a.teams*2 && plus.firstYearBeforeTax-recommended.firstYearBeforeTax <=200*a.teams){
+     neededCameras<=a.teams*2 && plus.firstYearBeforeTax-recommended.firstYearBeforeTax <=500*a.teams){
     recommended=plus;
   }
   return {comparisons,recommended,customNeeded:!recommended,pricingDate:CATALOG_DATE};
