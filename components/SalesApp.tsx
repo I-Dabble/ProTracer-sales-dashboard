@@ -294,6 +294,29 @@ export default function SalesApp(){
           ['Annual training',...PACKAGES.map(p=>p.trainingHoursPerTeam?`${p.trainingHoursPerTeam} hr / team`:'Optional')],
         ].map((row,i)=><tr key={i}>{row.map((cell,j)=>j===0?<th scope="row" key={j}>{cell}</th>:<td key={j}>{cell}</td>)}</tr>)}</tbody></table></div>}
       </section>
+
+      <section className="card promo-card" id="promotions" aria-labelledby="promotions-heading">
+        <div className="section-title"><span className="number">05</span><div><span className="kicker">ONE PROMOTION PER QUOTE</span><h2 id="promotions-heading">Choose a promotional benefit</h2><p>Select up to one offer for <strong>{selectedBase?.package.title??'your package'}</strong>. Offers that don't match your package, service commitment, or payment method are visible but disabled.</p></div></div>
+        <div className="promo-grid" role="radiogroup" aria-label="Select one promotional benefit">
+          <button type="button" role="radio" aria-checked={selectedPromotion==='none'} className={`promo-tile ${selectedPromotion==='none'?'selected':''}`} onClick={()=>setSelectedPromotion('none')}>
+            <span className="promo-head"><span className="promo-dot">{selectedPromotion==='none'&&<Check size={14}/>}</span><strong>Standard package</strong><span className="promo-status">No promotion</span></span>
+            <small>Keep the published package and its included benefits; any compatible BYOD credit still applies.</small>
+          </button>
+          {PROMOTIONS.map(p=>{
+            const check=selectedBase?getPromotionAvailability(p.id,selectedBase.package.id,answers.billing,answers.serviceYears):{available:false,reason:'Select a package first.'};
+            const active=check.available&&selectedPromotion===p.id;
+            return <button type="button" key={p.id} role="radio" aria-checked={active} disabled={!check.available} title={check.available?p.qualification:check.reason}
+              className={`promo-tile ${active?'selected':''} ${!check.available?'disabled':''}`}
+              onClick={()=>{if(check.available)setSelectedPromotion(p.id);}}>
+              <span className="promo-head"><span className="promo-dot">{active&&<Check size={14}/>}</span><strong>{p.title}</strong><span className={`promo-status ${check.available?(p.requiresTeamReview?'review':'valid'):'locked'}`}>{check.available?(p.requiresTeamReview?'Consult team':'Cleared'):'Unavailable'}</span></span>
+              <small>{p.description}</small>
+              <span className="promo-terms">{check.available?p.qualification:check.reason}</span>
+            </button>;
+          })}
+        </div>
+        {(selectedBase?.package.id==='byod'||answers.useOwnIpad)&&<p className="promo-approval"><Info size={15}/> BYOD is independent of the one-promotion limit. School-supplied {selectedBase?.package.id==='byod'?'processing computers':''}{selectedBase?.package.id==='byod'&&answers.useOwnIpad?' and ':''}{answers.useOwnIpad?'iPads':''} must pass compatibility checks before a binding sale.</p>}
+        {chosenPromotion&&<p className="promo-approval"><CheckCircle2 size={16}/> Selected: <strong>{chosenPromotion.title}</strong>. {chosenPromotion.requiresTeamReview?'This is a request for team review; no rate protection is guaranteed.':'Subject to written ProTracer approval.'} Only one promotional benefit is included.</p>}
+      </section>
     </div>
 
     <aside className="quote-column" aria-label="Live quote estimate"><div className="quote-box">
@@ -301,6 +324,8 @@ export default function SalesApp(){
       <div className="recommendation"><div className="recommend-chip"><Sparkles size={16}/> OUR RECOMMENDATION</div><h2>{preferred?.package.title??'Custom package'}</h2><p>{preferred?pitch(preferred,answers):'Your requirements need a custom conversation with ProTracer.'}</p></div>
       {configured&&<div className="bonus"><h3><BadgeCheck size={17}/> More value you receive</h3><ul>{valueBonuses(configured,answers).map(s=><li key={s}><CheckCircle2 size={16}/>{s}</li>)}</ul></div>}
       {selectionDiffers&&<div className="selection-banner">Viewing your selection: <strong>{configured?.package.title}</strong> · Recommended: <strong>{preferred?.package.title}</strong></div>}
+      {chosenPromotion&&<div className="promo-quote"><CheckCircle2 size={16}/><span><strong>Selected promotion:</strong> {chosenPromotion.title}{chosenPromotion.requiresTeamReview?' (pending team approval)':''}</span></div>}
+      {(answers.useOwnIpad||configured?.package.id==='byod')&&<div className="promo-quote"><Info size={16}/><span><strong>BYOD verification required:</strong> school-owned processing computer and/or iPad must meet ProTracer's compatibility requirements.</span></div>}
       <div className="compare-prices">
         <div className="compare-price"><span>INDIVIDUAL CATALOG ITEMS</span><strong>{price(independent.firstYear+(independentStateTax??0))}</strong><small>Hardware + Basic software reference · {stateRate===null?'before tax':'incl. state-only tax'} · not sold as a standalone bundle</small></div>
         <div className="compare-price"><span>RECOMMENDED COMPLETE PACKAGE</span><strong>{preferred?price(baseYear(preferred,answers)):'Custom'}</strong><small>Published package base, before extras or tax</small></div>
@@ -311,7 +336,7 @@ export default function SalesApp(){
         <div className="billing-foot"><CreditCard size={16}/><span>{answers.billing==='annual'?'Annual payment saves on recurring service.':'Twelve monthly service installments; hardware is NOT financed.'}</span></div>
         {configured.estimatedUsageAnnual>0&&<p className="overage-message"><Info size={15}/> {price(configured.estimatedUsageAnnual)} of annual usage overages are estimated in the first-year number, but only charged if actually incurred.</p>}
         <button type="button" className="expand-button lines-link" aria-expanded={breakdownOpen} onClick={()=>setBreakdownOpen(!breakdownOpen)}>See every line item <ChevronDown className={breakdownOpen?'up':''} size={17}/></button>
-        {breakdownOpen&&<div className="quote-lines">{configured.lines.filter(x=>x.amount>0).map((l,i)=><div key={`${l.name}-${i}`}><span>{l.name}<small>{l.quantity} × {price(l.unitPrice)} · {l.period==='year'?'yearly':'one-time'}</small></span><strong>{price(l.amount)}</strong></div>)}{configured.estimatedUsageAnnual>0&&<div><span>Usage overages (estimate)<small>Only billed for actual use</small></span><strong>{price(configured.estimatedUsageAnnual)}</strong></div>}</div>}
+        {breakdownOpen&&<div className="quote-lines">{configured.lines.filter(x=>x.amount!==0||x.name.startsWith('Promotion:')).map((l,i)=><div key={`${l.name}-${i}`}><span>{l.name}<small>{l.quantity} × {price(l.unitPrice)} · {l.period==='year'?'yearly':'one-time'}</small></span><strong>{price(l.amount)}</strong></div>)}{configured.estimatedUsageAnnual>0&&<div><span>Usage overages (estimate)<small>Only billed for actual use</small></span><strong>{price(configured.estimatedUsageAnnual)}</strong></div>}</div>}
       </>}
       <div className="quote-actions"><button className="button button-light" type="button" onClick={()=>window.print()}><Printer size={18}/> Print</button><button className="button button-blue" type="button" onClick={copySummary}><ClipboardCopy size={17}/>{copied?'Copied!':'Copy summary'}</button></div>
       <a className="contact-link" href="https://www.protracerofficial.com/" target="_blank" rel="noopener noreferrer">Explore ProTracer <ArrowRight size={17}/></a>
