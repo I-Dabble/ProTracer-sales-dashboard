@@ -113,8 +113,8 @@ export default function SalesApp(){
 
   function update<K extends keyof QuoteAnswers>(field:K,value:QuoteAnswers[K],clearSelection=true){
     setAnswers(prev=>({...prev,[field]:value}));
-    if(clearSelection)setSelected(null);
-    if(clearSelection||field==='billing'||field==='serviceYears')setSelectedPromotion('none');
+    // Preserve an explicitly chosen package when changing quantities or cloud needs.
+    if(field==='billing'||field==='serviceYears')setSelectedPromotion('none');
   }
   function reset(){setAnswers({...INITIAL,hardwareNeeds:{...DEFAULT_HARDWARE_NEEDS},addonQuantities:{}});setSelected(null);setSelectedPromotion('none');setZipStatus('empty');setZipCity('');setCopied(false);}
   function changeTeamCount(n:number){
@@ -127,7 +127,7 @@ export default function SalesApp(){
           count(prior===a.teams*2?n*2:prior===a.teams?n:prior+(n-a.teams));
       }
       return {...a,teams:n,hardwareNeeds:updated};
-    });setSelected(null);setSelectedPromotion('none');
+    });
   }
   function changeHardware(key:keyof HardwareNeeds,n:number){
     setAnswers(a=>{
@@ -139,10 +139,10 @@ export default function SalesApp(){
         updated.sdCards=count(prev.sdCards+delta);
       }
       return {...a,hardwareNeeds:updated};
-    });setSelected(null);setSelectedPromotion('none');
+    });
   }
   function changeAddon(id:ProductId,value:number){
-    setAnswers(a=>({...a,addonQuantities:{...a.addonQuantities,[id]:value}}));setSelected(null);setSelectedPromotion('none');
+    setAnswers(a=>({...a,addonQuantities:{...a.addonQuantities,[id]:value}}));
   }
   function choosePackage(id:PackageId){
     setAnswers(a=>{
@@ -241,7 +241,7 @@ export default function SalesApp(){
 
       <section className="card" aria-labelledby="equipment-heading"><div className="section-title"><span className="number">02</span><div><span className="kicker">SELECT EXACT QUANTITIES</span><h2 id="equipment-heading">What equipment do you need?</h2><p>Enter the <strong>total needed</strong>, not extra items on top of a package. Each complete kit includes a processing laptop and iPad; compatible customer-owned alternatives are available.</p></div></div>
         <div className="rule"><BadgeCheck size={23}/><span><strong>One camera = one included mount + recording card</strong><small>Every package includes a sport mount and microSD card per camera. We credit these automatically so you never pay twice.</small></span></div>
-        <div className="quick-set"><span>Quick start</span><button type="button" onClick={()=>{setAnswers(a=>({...a,hardwareNeeds:{...(a.hardwareNeeds??DEFAULT_HARDWARE_NEEDS),cameras:a.teams,mounts:a.teams,sdCards:a.teams,laptops:a.teams,tripods:a.teams,ipads:a.useOwnIpad?0:Math.max((a.hardwareNeeds??DEFAULT_HARDWARE_NEEDS).ipads,a.teams)}}));setSelected(null);}}>1 camera / team</button><button type="button" onClick={()=>{setAnswers(a=>({...a,hardwareNeeds:{...(a.hardwareNeeds??DEFAULT_HARDWARE_NEEDS),cameras:a.teams*2,mounts:a.teams*2,sdCards:a.teams*2,laptops:a.teams,tripods:a.teams,ipads:a.useOwnIpad?0:Math.max((a.hardwareNeeds??DEFAULT_HARDWARE_NEEDS).ipads,a.teams)}}));setSelected(null);}}>2 cameras / team</button></div>
+        <div className="quick-set"><span>Quick start</span><button type="button" onClick={()=>{setAnswers(a=>({...a,hardwareNeeds:{...(a.hardwareNeeds??DEFAULT_HARDWARE_NEEDS),cameras:a.teams,mounts:a.teams,sdCards:a.teams,laptops:a.teams,tripods:a.teams,ipads:a.useOwnIpad?0:Math.max((a.hardwareNeeds??DEFAULT_HARDWARE_NEEDS).ipads,a.teams)}}));}}>1 camera / team</button><button type="button" onClick={()=>{setAnswers(a=>({...a,hardwareNeeds:{...(a.hardwareNeeds??DEFAULT_HARDWARE_NEEDS),cameras:a.teams*2,mounts:a.teams*2,sdCards:a.teams*2,laptops:a.teams,tripods:a.teams,ipads:a.useOwnIpad?0:Math.max((a.hardwareNeeds??DEFAULT_HARDWARE_NEEDS).ipads,a.teams)}}));}}>2 cameras / team</button></div>
         <div className="equipment-grid">{EQUIPMENT.map(e=>{const Icon=e.icon;return <div className="equipment-row" key={e.key}><div className="equipment-icon"><Icon size={20}/></div><div className="equipment-copy"><strong>{e.title}</strong><small>{e.hint}</small></div><Quantity label={e.title} min={e.key==='cameras'?1:0} max={100} value={h[e.key]} onChange={v=>changeHardware(e.key,v)}/></div>;})}</div>
         <p className="helper"><Info size={15}/> Every package includes one iPad per licensed team unless you choose customer-supplied iPads below. A processing computer is still required; for Basic BYOD, ProTracer must approve the school's computer.</p>
         <div className="byod-panel">
