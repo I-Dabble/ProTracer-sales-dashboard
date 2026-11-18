@@ -10,10 +10,11 @@ import {
 import { ADDONS, CATALOG_DATE, DEPT_EXTRA, PACKAGES, type PackageId, type ProductId } from '@/lib/catalog';
 import {
   DEFAULT_ANSWERS, DEFAULT_HARDWARE_NEEDS, estimateIndividualComponents,
-  getRecommendations, price, type HardwareNeeds, type QuoteAnswers,
+  getRecommendations, evaluatePackage, price, type HardwareNeeds, type QuoteAnswers,
   type QuoteEvaluation,
 } from '@/lib/quote';
 import { STATES } from '@/lib/states';
+import { getPromotionAvailability, promotionById, PROMOTIONS, type PromotionId } from '@/lib/promotions';
 import { getStateRate, stateHardwareTax, STATE_RATE_SOURCE, STATE_RATE_SOURCE_URL } from '@/lib/tax';
 
 const INITIAL:QuoteAnswers={...DEFAULT_ANSWERS,hardwareNeeds:{...DEFAULT_HARDWARE_NEEDS}};
@@ -21,10 +22,10 @@ const EQUIPMENT: Array<{key:keyof HardwareNeeds;title:string;hint:string;icon:Lu
   {key:'cameras',title:'360° cameras',hint:'Capture your action from every angle',icon:Camera},
   {key:'mounts',title:'Camera mounts',hint:'One comes with each package camera',icon:Target},
   {key:'sdCards',title:'Recording cards',hint:'One microSD comes with each camera',icon:MemoryStick},
-  {key:'laptops',title:'Processing laptops',hint:'Configured and ready for capture',icon:Laptop},
+  {key:'laptops',title:'Processing laptops',hint:'Included in complete plans; 0 for approved BYOD',icon:Laptop},
   {key:'tripods',title:'Camera tripods',hint:'Portable setup at your venue',icon:Layers},
   {key:'cases',title:'Pelican cases',hint:'Protective equipment transport',icon:Package},
-  {key:'ipads',title:'Refurbished iPads',hint:'Additional configured mobile access',icon:Monitor},
+  {key:'ipads',title:'Refurbished iPads',hint:'One included per team unless you supply your own',icon:Monitor},
   {key:'backup',title:'6 TB backup drives',hint:'Optional local video backup',icon:HardDrive},
 ];
 const count=(v:number,min=0,max=100)=>Number.isFinite(v)?Math.min(max,Math.max(min,Math.floor(v))):min;
@@ -51,6 +52,9 @@ function valueBonuses(q:QuoteEvaluation,a:QuoteAnswers){
   const includedCameras=p.camerasPerTeam*kitCount;
   const includedCases=p.casePerTeam*kitCount;
   const list:string[]=[];
+  if(a.useOwnIpad)list.push(`${kitCount} school-owned iPad${kitCount===1?'':'s'} — $500 equipment credit per team`);
+  else list.push(`${kitCount} configured refurbished iPad${kitCount===1?'':'s'} included with the package`);
+  if(p.id==='byod')list.push('School-supplied processing computer subject to engineering approval');
   if(includedCameras>h.cameras)list.push(`${includedCameras-h.cameras} additional 360° camera${includedCameras-h.cameras===1?'':'s'} with mounts and cards`);
   if(includedCases>h.cases)list.push(`${includedCases-h.cases} Pelican protective case${includedCases-h.cases===1?'':'s'}`);
   if(q.includedStorageGb>a.storageGb)list.push(`${fmt(q.includedStorageGb-a.storageGb)} GB more cloud storage than requested`);
@@ -66,7 +70,8 @@ function valueBonuses(q:QuoteEvaluation,a:QuoteAnswers){
 }
 function pitch(q:QuoteEvaluation,a:QuoteAnswers){
   const name=q.package.id;
-  if(name==='basic')return 'All the essentials for a strong start: a complete camera, mount, recording card and processing setup with ProTracer software, video storage and standard support.';
+  if(name==='basic')return 'A complete camera, mount, recording card, processing laptop and refurbished iPad with ProTracer software, cloud storage and standard support.';
+  if(name==='byod')return 'Save on the processing laptop by using an approved school computer. Your camera, mount, recording card, ProTracer software and cloud service remain included. iPad options are available separately.';
   if(name==='plus')return 'Cover more of the action: Team Plus includes two complete camera-and-mount setups and a Pelican case, while keeping the same recurring service price as Basic.';
   if(name==='premium')return 'Step up to larger cloud capacity, extended retention, priority service, premium protection and annual training—alongside your two complete camera systems.';
   return `Equip ${Math.max(5,a.teams)} named teams under one department account with individual camera kits, pooled video storage and centralized oversight.`;
@@ -81,6 +86,7 @@ function baseYear(q:QuoteEvaluation,a:QuoteAnswers){
 export default function SalesApp(){
   const [answers,setAnswers]=useState<QuoteAnswers>(INITIAL);
   const [selected,setSelected]=useState<PackageId|null>(null);
+  const [selectedPromotion,setSelectedPromotion]=useState<PromotionId>('none');
   const [extrasOpen,setExtrasOpen]=useState(false);
   const [compareOpen,setCompareOpen]=useState(false);
   const [breakdownOpen,setBreakdownOpen]=useState(false);
@@ -92,7 +98,11 @@ export default function SalesApp(){
   const independent=useMemo(()=>estimateIndividualComponents(answers),[answers]);
   const preferred=recom.recommended;
   const manuallySelected=recom.comparisons.find(p=>p.package.id===selected&&p.eligible);
-  const configured=manuallySelected??preferred;
+  const selectedBase=manuallySelected??preferred;
+  const promoEligibility=selectedBase?getPromotionAvailability(selectedPromotion,selectedBase.package.id,answers.billing,answers.serviceYears):null;
+  const appliedPromotion=promoEligibility?.available?selectedPromotion:'none';
+  const configured=selectedBase?evaluatePackage(answers,selectedBase.package,appliedPromotion):null;
+  const chosenPromotion=configured?promotionById(configured.appliedPromotion):undefined;
   const stateRate=getStateRate(answers.shippingState);
   const independentStateTax=stateHardwareTax(independent.taxableBase,answers.shippingState);
   const pickedExtras=ADDONS.filter(x=>(answers.addonQuantities[x.id]??0)>0);
@@ -102,19 +112,22 @@ export default function SalesApp(){
   const selectionDiffers=preferred&&configured&&preferred.package.id!==configured.package.id;
 
   function update<K extends keyof QuoteAnswers>(field:K,value:QuoteAnswers[K],clearSelection=true){
-    setAnswers(prev=>({...prev,[field]:value}));if(clearSelection)setSelected(null);
+    setAnswers(prev=>({...prev,[field]:value}));
+    if(clearSelection)setSelected(null);
+    if(clearSelection||field==='billing'||field==='serviceYears')setSelectedPromotion('none');
   }
-  function reset(){setAnswers({...INITIAL,hardwareNeeds:{...DEFAULT_HARDWARE_NEEDS},addonQuantities:{}});setSelected(null);setZipStatus('empty');setZipCity('');setCopied(false);}
+  function reset(){setAnswers({...INITIAL,hardwareNeeds:{...DEFAULT_HARDWARE_NEEDS},addonQuantities:{}});setSelected(null);setSelectedPromotion('none');setZipStatus('empty');setZipCity('');setCopied(false);}
   function changeTeamCount(n:number){
     setAnswers(a=>{
       const prev=a.hardwareNeeds??DEFAULT_HARDWARE_NEEDS;
       const updated={...prev};
-      for(const key of ['cameras','mounts','sdCards','laptops','tripods'] as const){
+      for(const key of ['cameras','mounts','sdCards','laptops','tripods','ipads'] as const){
         const prior=prev[key];
-        updated[key]=count(prior===a.teams*2?n*2:prior===a.teams?n:prior+(n-a.teams));
+        updated[key]=(key==='laptops'&&prior===0)||(key==='ipads'&&a.useOwnIpad)?0:
+          count(prior===a.teams*2?n*2:prior===a.teams?n:prior+(n-a.teams));
       }
       return {...a,teams:n,hardwareNeeds:updated};
-    });setSelected(null);
+    });setSelected(null);setSelectedPromotion('none');
   }
   function changeHardware(key:keyof HardwareNeeds,n:number){
     setAnswers(a=>{
@@ -126,10 +139,24 @@ export default function SalesApp(){
         updated.sdCards=count(prev.sdCards+delta);
       }
       return {...a,hardwareNeeds:updated};
-    });setSelected(null);
+    });setSelected(null);setSelectedPromotion('none');
   }
   function changeAddon(id:ProductId,value:number){
-    setAnswers(a=>({...a,addonQuantities:{...a.addonQuantities,[id]:value}}));setSelected(null);
+    setAnswers(a=>({...a,addonQuantities:{...a.addonQuantities,[id]:value}}));setSelected(null);setSelectedPromotion('none');
+  }
+  function choosePackage(id:PackageId){
+    setAnswers(a=>{
+      const prev=a.hardwareNeeds??DEFAULT_HARDWARE_NEEDS;
+      return {...a,hardwareNeeds:{...prev,laptops:id==='byod'?0:Math.max(prev.laptops,a.teams),ipads:a.useOwnIpad?0:Math.max(prev.ipads,a.teams)}};
+    });
+    setSelected(id);setSelectedPromotion('none');
+  }
+  function chooseOwnIpad(own:boolean){
+    setAnswers(a=>{
+      const prev=a.hardwareNeeds??DEFAULT_HARDWARE_NEEDS;
+      return {...a,useOwnIpad:own,hardwareNeeds:{...prev,ipads:own?0:Math.max(1,a.teams)}};
+    });
+    setSelectedPromotion('none');
   }
   function setState(state:string){
     setAnswers(a=>({...a,shippingState:state,shippingZip:''}));
@@ -163,9 +190,14 @@ export default function SalesApp(){
     const lines=[
       'PROTRACER | PERSONALIZED PACKAGE ESTIMATE',
       `Program: ${answers.teams} named team(s)`,
-      `Requested: ${h.cameras} cameras, ${h.mounts} mounts, ${h.sdCards} microSD cards, ${h.laptops} laptops, ${h.tripods} tripods, ${h.cases} Pelican cases`,
+      `Service commitment: ${answers.serviceYears} year(s); year two billed separately unless contracted otherwise`,
+      `Requested: ${h.cameras} cameras, ${h.mounts} mounts, ${h.sdCards} microSD cards, ${h.laptops} processing laptops, ${h.ipads} ProTracer-supplied iPads, ${h.tripods} tripods, ${h.cases} Pelican cases`,
       `Recommended: ${preferred?.package.title??'Custom review required'}`,
       `Configured selection: ${headline}`,
+      `Customer-owned iPad option: ${answers.useOwnIpad?'Yes, $500 credit per team; each device must pass ProTracer certification':'No, ProTracer supplies included iPads'}`,
+      `Promotional benefit: ${chosenPromotion?chosenPromotion.title:'None'}`,
+      ...(configured?.package.id==='byod'?['Processing-computer BYOD REQUIRES engineering approval before any binding sale.']:[]),
+      ...(chosenPromotion?.requiresTeamReview?['Rate lock REQUEST only; ProTracer team approval required.']:[]),
       `Individually priced catalog reference (first year): ${price(independent.firstYear)} before tax; not an independent product offering`,
       `Recommended base package: ${preferred?price(baseYear(preferred,answers)):'Contact ProTracer'}`,
       `Configured first-year price before tax: ${quote?price(quote.firstYearBeforeTax):'Custom quote needed'}`,
@@ -176,6 +208,7 @@ export default function SalesApp(){
       `Billing: ${answers.billing==='annual'?'Annual service prepaid':'Monthly service payments; hardware upfront'}`,
       '',
       'Included highlights:',...(quote?valueBonuses(quote,answers).map(v=>'• '+v):[]),
+      ...(quote?quote.lines.filter(l=>l.name.startsWith('Promotion:')).map(l=>'• '+l.name):[]),
       '',
       'Estimate only. Local/district taxes, freight, exemptions and site-specific charges not included. One-time equipment/setup is treated as tangible hardware for this estimate; actual tax treatment must be confirmed. Prices subject to written quote. https://www.protracerofficial.com',
     ];
