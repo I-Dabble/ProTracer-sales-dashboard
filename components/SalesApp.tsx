@@ -161,6 +161,19 @@ export default function SalesApp(){
     });
     setSelectedPromotion('none');
   }
+  function chooseBasicDeviceConfig(schoolLaptop:boolean,schoolIpad:boolean){
+    // Device sourcing choices are independent of the one-promotion allowance.
+    setAnswers(a=>{
+      const prev=a.hardwareNeeds??DEFAULT_HARDWARE_NEEDS;
+      return {...a,useOwnIpad:schoolIpad,hardwareNeeds:{
+        ...prev,
+        laptops:schoolLaptop?0:Math.max(a.teams,prev.laptops),
+        ipads:schoolIpad?0:Math.max(a.teams,prev.ipads),
+      }};
+    });
+    setSelected(schoolLaptop?'byod':'basic');
+    setSelectedPromotion('none');
+  }
   function setState(state:string){
     setAnswers(a=>({...a,shippingState:state,shippingZip:''}));
     setZipStatus('empty');setZipCity('');
@@ -244,6 +257,32 @@ export default function SalesApp(){
       </section>
 
       <section className="card" aria-labelledby="equipment-heading"><div className="section-title"><span className="number">02</span><div><span className="kicker">SELECT EXACT QUANTITIES</span><h2 id="equipment-heading">What equipment do you need?</h2><p>Enter the <strong>total needed</strong>, not extra items on top of a package. Each complete kit includes a processing laptop and iPad; compatible customer-owned alternatives are available.</p></div></div>
+
+        <div className="basic-choice-panel" aria-label="Basic Team purchase configurations">
+          <div className="basic-choice-intro">
+            <div><strong>Basic Team: four ways to get started</strong><small>Choose who provides the processing laptop and iPad. One-team starting prices shown for Year 1 with annual-prepaid software.</small></div>
+            <span className="basic-choice-note"><Laptop size={16}/> <Monitor size={16}/> BOTH devices remain required</span>
+          </div>
+          <div className="basic-choice-grid" role="group" aria-label="Basic Team equipment source and first-year price">
+            {([
+              {id:'complete',laptop:false,ipad:false,title:'ProTracer laptop + iPad',amount:6395,detail:'Complete kit'},
+              {id:'ipad',laptop:false,ipad:true,title:'Use your own iPad',amount:5895,detail:'Save $500'},
+              {id:'laptop',laptop:true,ipad:false,title:'Use your own laptop',amount:4995,detail:'Save $1,400'},
+              {id:'both',laptop:true,ipad:true,title:'Use your own laptop + iPad',amount:4495,detail:'Save $1,900'},
+            ] as const).map(option=>{
+              const active=selectedBase?.package.id===(option.laptop?'byod':'basic')&&answers.useOwnIpad===option.ipad;
+              return <button key={option.id} type="button" aria-pressed={active}
+                onClick={()=>chooseBasicDeviceConfig(option.laptop,option.ipad)}
+                className={`basic-choice-tile ${active?'active':''}`}>
+                <span className="basic-choice-heading">{option.title}</span>
+                <strong className="basic-choice-price">{price(option.amount)}</strong>
+                <span className="basic-choice-detail">{option.detail}</span>
+                {active&&<span className="basic-choice-active"><Check size={13}/> Selected</span>}
+              </button>;
+            })}
+          </div>
+          <p className="basic-choice-caption"><Info size={14}/> Customer-owned laptop and iPad configurations require ProTracer engineering approval. BYOD is a hardware choice and does not count against your one eligible promotion. Prices increase if additional kits or services are selected.</p>
+        </div>
         <div className="rule"><BadgeCheck size={23}/><span><strong>One camera = one included mount + recording card</strong><small>Every package includes a sport mount and microSD card per camera. We credit these automatically so you never pay twice.</small></span></div>
         <div className="quick-set"><span>Quick start</span><button type="button" onClick={()=>{setAnswers(a=>({...a,hardwareNeeds:{...(a.hardwareNeeds??DEFAULT_HARDWARE_NEEDS),cameras:a.teams,mounts:a.teams,sdCards:a.teams,laptops:a.teams,tripods:a.teams,ipads:a.useOwnIpad?0:Math.max((a.hardwareNeeds??DEFAULT_HARDWARE_NEEDS).ipads,a.teams)}}));}}>1 camera / team</button><button type="button" onClick={()=>{setAnswers(a=>({...a,hardwareNeeds:{...(a.hardwareNeeds??DEFAULT_HARDWARE_NEEDS),cameras:a.teams*2,mounts:a.teams*2,sdCards:a.teams*2,laptops:a.teams,tripods:a.teams,ipads:a.useOwnIpad?0:Math.max((a.hardwareNeeds??DEFAULT_HARDWARE_NEEDS).ipads,a.teams)}}));}}>2 cameras / team</button></div>
         <div className="equipment-grid">{EQUIPMENT.map(e=>{const Icon=e.icon;return <div className="equipment-row" key={e.key}><div className="equipment-icon"><Icon size={20}/></div><div className="equipment-copy"><strong>{e.title}</strong><small>{e.hint}</small></div><Quantity label={e.title} min={e.key==='cameras'?1:0} max={100} value={h[e.key]} onChange={v=>changeHardware(e.key,v)}/></div>;})}</div>
