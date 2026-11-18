@@ -8,23 +8,34 @@ A public, customer-first configuration and comparison experience for ProTracer. 
 
 1. Choose the type of organization and number of named teams.
 2. Enter **the total quantities needed** for cameras, sport-specific mounts, recording cards, processing laptops, tripods, protective cases, iPads and local backup drives. One package camera includes one mount and one recording card. Camera changes automatically adjust requested mounts/cards, but users can edit them separately. Use the `1 camera / team` or `2 cameras / team` shortcuts to start faster.
-3. Set storage, video-delivery allowance, retention, support/protection, remote training and annual-prepay or monthly-service billing.
+3. Set storage, video-delivery allowance, retention, support/protection, remote training, annual-prepay or monthly-service billing, and a one- or two-year service commitment.
 4. Click **Add optional extras** for truly *additional* items beyond the quantities entered above. The catalog includes equipment, installation and annual options. An extra camera and a mount can automatically receive the published camera/mount bundle price.
 5. Enter a **five-digit ZIP** to auto-identify city/state, or choose a **state** directly. State tax is calculated automatically against the hardware taxable-base estimate. See the limitation below.
-6. Compare the **individually listed equipment + Basic software benchmark** (NOT a standalone approved offer), the **recommended base package**, and the **configured package with requested upgrades and extras**. Review bonus value not originally requested. Print or copy a summary. No data is submitted or saved.
+6. Compare the **individually listed equipment + Basic software benchmark** (NOT a standalone approved offer), the **recommended base package**, and the **configured package with requested upgrades and extras**. Choose **at most one** package-eligible promotional benefit. Grayed-out promotions are unavailable under the selected tier, payment cadence, or service term. Customer-supplied equipment does **not** consume a promotion slot. Review bonus value not originally requested. Print or copy a summary. No data is submitted or saved.
 
-## Approved FY2027 package catalog (November 16, 2026)
+## Updated FY2027 customer package catalog (November 17, 2026)
 
 | Package | One-time equipment + setup | Annual service prepaid | Monthly service | Year 1 (annual plan) | Included cameras / mounts / cards |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Basic Team | $4,592.80 | $2,102.20 | $207.60 | **$6,695** | 1 / 1 / 1 |
+| Basic Team | $4,292.80 | $2,102.20 | $207.60 | **$6,395** | 1 / 1 / 1 |
+| Basic Team — Use Your Computer (conditional) | $2,892.80 | $2,102.20 | $207.60 | **$4,995** | 1 / 1 / 1 |
 | Team Plus | $6,392.80 | $2,102.20 | $207.60 | **$8,495** | 2 / 2 / 2 |
 | Premium Team | $6,751.60 | $3,743.40 | $366.20 | **$10,495** | 2 / 2 / 2 |
-| Athletic Department (5 named teams) | $19,995 | $22,995 | $2,299.50 | **$42,990** | 5 / 5 / 5 |
+| Athletic Department (5 named teams) | $22,300 | $22,995 | $2,299.50 | **$45,295** | 5 / 5 / 5 |
 
-The department plan includes five full Basic kits. Each additional sixth-through-tenth named team adds **$4,495 one-time** and **$4,495 annual service** (or $449.50 monthly), plus one camera, mount, card and laptop. More than ten named teams is a custom quote. All hardware is paid upfront; monthly installments apply only to software/service. Additional equipment does not grant an additional named team license.
+The department plan includes five full Basic kits. Each additional sixth-through-tenth named team adds **$4,495 one-time** and **$4,495 annual service** (or $449.50 monthly), plus one camera, mount, card, processing laptop and configured iPad. More than ten named teams is a custom quote. All hardware is paid upfront; monthly installments apply only to software/service. Additional equipment does not grant an additional named team license.
 
-The catalog is derived from [ProTracer financial model FY2027–FY2031, November 16, 2026](https://docs.google.com/spreadsheets/d/1uZ5NzyRCeiEFvYMgHyHUoPUxyccnkAPo34DlKnGdXBU/edit). Package pricing is unchanged from the latest model, with the one-mount-per-camera policy incorporated.
+The catalog is derived from [ProTracer financial model FY2027–FY2031, November 17, 2026](https://docs.google.com/spreadsheets/d/1uZ5NzyRCeiEFvYMgHyHUoPUxyccnkAPo34DlKnGdXBU/edit). These prices incorporate mandatory iPads, the one-mount-per-camera policy, and the revised Basic and Athletic Department pricing.
+
+## Device BYOD discounts and promotional offers
+
+All standard complete kits include **one processing laptop and one configured refurbished iPad per licensed team**; the five-team Department package includes five of each. Schools may choose Basic Team with a compatible customer-supplied processing computer, reducing the first-year price from $6,395 to **$4,995**. This Basic computer BYOD requires ProTracer engineering certification.
+
+Any package can alternatively use customer-provided compatible iPads instead of ProTracer-provided devices. The equipment credit is **$500 per named team**. Basic becomes **$5,895** with an own iPad but supplied laptop; combining the Basic school-owned computer and iPad options produces **$4,495** for the first service year before tax. Department customers supplying all five iPads receive a $2,500 credit. The customer must still furnish compatible devices. The iPad cannot substitute for the processing computer.
+
+Device BYOD choices are **not promotional giveaways**, so both device BYOD choices may be combined with **one** eligible promotional benefit. The available promotions are one of: 250 GB additional first-year retained storage; 50 GB/month additional video delivery for 12 months; one extra remote training hour; one extra sport mount; one 6 TB backup drive; or a *request* for a 24-month subscription rate lock. The rate lock requires separate team approval and is never guaranteed by the estimator.
+
+Promotion options are constrained by the actual package, billing frequency and one- or two-year commitment. Noneligible offers remain visible but grayed out with a reason. The permitted term and prepaid requirements come from Jeff's November 17 sales offer card. Cloud promotions do not extend 12- or 24-month retention rights. Year two of a two-year commitment is billed separately unless the written agreement specifies otherwise.
 
 ## Automatic destination state tax estimation
 
@@ -70,10 +81,11 @@ The app produces static files in `out/`, deployable to GitHub Pages, S3/CloudFro
 
 - `components/SalesApp.tsx`: customer UX, ZIP lookup, print and copy summary
 - `lib/catalog.ts`: packages and optional extras
+- `lib/promotions.ts`: package- and term-specific promotion eligibility
 - `lib/quote.ts`: pricing, recommendation and quantity-credit logic
 - `lib/tax.ts`: state rates and hardware-only tax calculation
 - `lib/states.ts`: state names and codes
-- `tests/quote.test.ts`: contract-style price, equipment, tax and quote regression tests
+- `tests/quote.test.ts`: contract-style price, BYOD, promotion, equipment, tax and quote regression tests
 - `app/globals.css`: responsive ProTracer-branded design
 - `public/protracer-logo.png`: ProTracer transparent wordmark
 
